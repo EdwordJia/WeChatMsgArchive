@@ -6,7 +6,7 @@
 - CPU占用 < 5%
 - 内存占用 < 100MB
 - 稳定运行 24小时
-""
+"""
 
 import time
 import psutil
@@ -18,7 +18,7 @@ from wechat_realtime_monitor import RealtimeMonitor
 
 
 class PerformanceMonitor:
-    """性能监控器""
+    """性能监控器"""
 
     def __init__(self):
         self.cpu_samples = []
@@ -49,28 +49,28 @@ class PerformanceMonitor:
 
             # 内存使用
             memory_mb = process.memory_info().rss / 1024 / 1024
-     self.memory_samples.append(memory_mb)
+            self.memory_samples.append(memory_mb)
 
             time.sleep(5)
 
     def get_report(self) -> dict:
         """生成性能报告"""
         if not self.cpu_samples:
-        return {'error': '无性能数据'}
+            return {'error': '无性能数据'}
 
         return {
             'cpu': {
-             'avg': round(sum(self.cpu_samples) / len(self.cpu_samples), 2),
+                'avg': round(sum(self.cpu_samples) / len(self.cpu_samples), 2),
                 'max': round(max(self.cpu_samples), 2),
                 'samples': len(self.cpu_samples)
             },
             'memory': {
                 'avg_mb': round(sum(self.memory_samples) / len(self.memory_samples), 2),
-           'max_mb': round(max(self.memory_samples), 2)
+                'max_mb': round(max(self.memory_samples), 2)
             },
             'latency': {
                 'avg_seconds': round(sum(self.latency_samples) / len(self.latency_samples), 2) if self.latency_samples else 0,
-          'max_seconds': round(max(self.latency_samples), 2) if self.latency_samples else 0
+                'max_seconds': round(max(self.latency_samples), 2) if self.latency_samples else 0
             }
         }
 
@@ -84,12 +84,12 @@ def test_realtime_monitor():
     # 配置
     DECRYPTED_DB_DIR = "output/decrypted_db/Multi"
     INDEX_DB_PATH = "output/wechat_index.db"
-    TEST_DURATION = 300  # 5分钟测试
+    TEST_DURATION = 30  # 30秒快速测试
 
     # 检查环境
     if not Path(DECRYPTED_DB_DIR).exists():
-     print(f"❌ 测试失败: 目录不存在 {DECRYPTED_DB_DIR}")
-     return
+        print(f"[ERROR] 测试失败: 目录不存在 {DECRYPTED_DB_DIR}")
+        return
 
     # 启动性能监控
     perf_monitor = PerformanceMonitor()
@@ -103,9 +103,9 @@ def test_realtime_monitor():
         print(f"[{datetime.now().strftime('%H:%M:%S')}] 新消息: {count}条, 延迟: {latency:.1f}秒")
 
     # 启动实时监控
-    print(f"\n✓ 启动实时监控（测试时长: {TEST_DURATION}秒）")
+    print(f"\n[OK] 启动实时监控（测试时长: {TEST_DURATION}秒）")
     print(f"  监控目录: {DECRYPTED_DB_DIR}")
-  print(f"  索引数据库: {INDEX_DB_PATH}")
+    print(f"  索引数据库: {INDEX_DB_PATH}")
     print("\n等待文件变化...\n")
 
     monitor = RealtimeMonitor(DECRYPTED_DB_DIR, INDEX_DB_PATH)
@@ -120,10 +120,10 @@ def test_realtime_monitor():
         monitor_thread.start()
 
         # 等待测试时长
-     time.sleep(TEST_DURATION)
+        time.sleep(TEST_DURATION)
 
     except KeyboardInterrupt:
-        print("\n\n⚠️  测试被用户中断")
+        print("\n\n[WARN] 测试被用户中断")
     finally:
         # 停止监控
         monitor.stop()
@@ -136,36 +136,36 @@ def test_realtime_monitor():
 
     report = perf_monitor.get_report()
 
-    print(f"\n📊 CPU 使用率:")
+    print(f"\n[CPU] CPU 使用率:")
     print(f"  平均: {report['cpu']['avg']}%")
     print(f"  峰值: {report['cpu']['max']}%")
-    print(f"  ✓ 目标: < 5%" if report['cpu']['avg'] < 5 else f"  ❌ 超标: {report['cpu']['avg']}% > 5%")
+    print(f"  [OK] 目标: < 5%" if report['cpu']['avg'] < 5 else f"  [FAIL] 超标: {report['cpu']['avg']}% > 5%")
 
-    print(f"\n💾 内存使用:")
+    print(f"\n[MEM] 内存使用:")
     print(f"  平均: {report['memory']['avg_mb']:.2f} MB")
     print(f"  峰值: {report['memory']['max_mb']:.2f} MB")
-    print(f"  ✓ 目标: < 100 MB" if report['memory']['avg_mb'] < 100 else f"  ❌ 超标: {report['memory']['avg_mb']:.2f} MB > 100 MB")
+    print(f"  [OK] 目标: < 100 MB" if report['memory']['avg_mb'] < 100 else f"  [FAIL] 超标: {report['memory']['avg_mb']:.2f} MB > 100 MB")
 
     if report['latency']['avg_seconds'] > 0:
-        print(f"\n⏱️  消息延迟:")
+        print(f"\n[TIME]  消息延迟:")
         print(f"  平均: {report['latency']['avg_seconds']:.2f}秒")
         print(f"  峰值: {report['latency']['max_seconds']:.2f}秒")
-        print(f"  ✓ 目标: < 10秒" if report['latency']['avg_seconds'] < 10 else f"  ❌ 超标: {report['latency']['avg_seconds']:.2f}秒 > 10秒")
+        print(f"  [OK] 目标: < 10秒" if report['latency']['avg_seconds'] < 10 else f"  [FAIL] 超标: {report['latency']['avg_seconds']:.2f}秒 > 10秒")
     else:
-    print(f"\n⚠️  测试期间无新消息，无法测试延迟")
+        print(f"[WARN] 测试期间无新消息，无法测试延迟")
 
     # 综合评估
     print("\n" + "=" * 60)
     passed = (
-      report['cpu']['avg'] < 5 and
+        report['cpu']['avg'] < 5 and
         report['memory']['avg_mb'] < 100 and
         (report['latency']['avg_seconds'] < 10 or report['latency']['avg_seconds'] == 0)
     )
 
     if passed:
-        print("✅ 性能测试通过")
+        print("[PASS] 性能测试通过")
     else:
-        print("❌ 性能测试未通过，需要优化")
+        print("[FAIL] 性能测试未通过，需要优化")
 
     print("=" * 60)
 
