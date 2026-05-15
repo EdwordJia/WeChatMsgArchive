@@ -59,7 +59,19 @@ class AutoPipeline:
         return "\n".join(lines)
 
     def _fetch_latest_messages(self) -> List[Dict]:
-        return []
+        """
+        获取微信群最新消息
+
+        组合思维：调用现有的wechat-data MCP工具
+        """
+        try:
+            # TODO: 调用wechat-data MCP获取最近24小时的群消息
+            # 示例：mcp__wechat_data__query_recent_messages(hours=24)
+            # 暂时返回空列表，等待MCP集成
+            return []
+        except Exception as e:
+            print(f"Failed to fetch messages: {e}")
+            return []
 
     def _identify_requirements(self, messages: List[Dict]) -> List[Dict]:
         if not messages:
@@ -87,6 +99,11 @@ class AutoPipeline:
             return []
 
     def _create_kanban_tasks(self, requirements: List[Dict]) -> List[str]:
+        """
+        将需求转换为看板任务
+
+        组合思维：调用现有的kanban-doc MCP工具
+        """
         if not requirements:
             return []
         created_tasks = []
@@ -100,6 +117,7 @@ class AutoPipeline:
             try:
                 project = self._map_requirement_to_project(req, project_mapping)
                 if project:
+                    # TODO: 调用kanban-doc MCP创建任务卡片
                     task_id = f"task-{len(created_tasks) + 1}"
                     created_tasks.append(task_id)
             except Exception:
@@ -133,11 +151,17 @@ class AutoPipeline:
         return assignments
 
     def _start_executions(self, assignments: Dict[str, str]) -> List[str]:
+        """
+        启动Agent执行分配的任务
+
+        组合思维：调用Agent工具启动子代理
+        """
         if not assignments:
             return []
         executions = []
         for task_id, agent in assignments.items():
             try:
+                # TODO: 调用Agent工具启动子代理执行
                 execution_id = f"exec-{task_id}-{agent}"
                 executions.append(execution_id)
             except Exception:
