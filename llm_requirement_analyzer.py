@@ -41,9 +41,8 @@ class LLMRequirementAnalyzer:
             self.client = Anthropic(api_key=self.api_key)
 
         # 规则模式的关键词（作为降级方案）
-        self.bug_keywords = ["崩溃", "闪退", "报错", "失败", "不行", "无效", "异常", "bug"]
-        self.requirement_keywords = ["需要", "希望", "能不能", "建议", "增加", "优化", "改进"]
-
+        self.bug_keywords = ["崩溃", "闪退", "报错", "失败", "不行", "无效", "异常", "bug", "用不了", "服务器问题", "无法", "出错", "卡住", "死机", "没反应", "丢了", "丢失", "错乱", "重复", "缺失", "不对", "有问题"]
+        self.requirement_keywords = ["需要", "希望", "能不能", "建议", "增加", "优化", "改进", "可以吗", "能否", "支持", "新增", "调整", "修改", "改成", "改为", "替换", "应该", "麻烦"]
     def analyze_message(self, message: str, context: Optional[List[str]] = None) -> Dict:
         """
         分析消息，识别需求/Bug

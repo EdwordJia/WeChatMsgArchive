@@ -16,7 +16,10 @@ sys.path.insert(0, str(claude_dir))
 
 from state_manager import ProjectState
 from project_manager import ProjectManager
-from wechat_message_fetcher import fetch_recent_messages
+try:
+    from wechat_msg_reader import fetch_recent_messages  # v2: correct MSG table
+except ImportError:
+    from wechat_message_fetcher import fetch_recent_messages  # legacy fallback
 
 
 class AutoPipeline:
@@ -59,19 +62,20 @@ class AutoPipeline:
         lines.append("=" * 60)
         return "\n".join(lines)
 
-    def _fetch_latest_messages(self) -> List[Dict]:
-        """
-        获取微信群最新消息
-
-        组合思维：调用现有的wechat_message_fetcher模块
-        """
+    def _fetch_latest_messages(self):
+        """Stage 1: fetch business-channel messages, skip ME-sent."""
         try:
-            messages = fetch_recent_messages(hours=24)
-            return messages
-        except Exception as e:
-            print(f"Failed to fetch messages: {e}")
+            from business_channels import get_business_channels
+            whitelist = get_business_channels()
+        except ImportError:
+            whitelist = None
+        try:
+            msgs = fetch_recent_messages(hours=24*30, chatroom_filter=whitelist)
+            msgs = [m for m in msgs if m.get("is_sender") != 1]
+            return msgs
+        except Exception as exc:
+            print("fetch failed:", exc)
             return []
-
     def _identify_requirements(self, messages: List[Dict]) -> List[Dict]:
         if not messages:
             return []
@@ -79,7 +83,7 @@ class AutoPipeline:
             from llm_requirement_analyzer import LLMRequirementAnalyzer
 
             analyzer = LLMRequirementAnalyzer()
-            results = analyzer.batch_analyze(messages, threshold=0.7)
+            results = analyzer.batch_analyze(messages, threshold=0.5)
             requirements = []
             for result in results:
                 req = {
@@ -97,40 +101,57 @@ class AutoPipeline:
             print(f"LLM analysis failed: {e}")
             return []
 
-    def _create_kanban_tasks(self, requirements: List[Dict]) -> List[str]:
-        """
-        将需求转换为看板任务
-
-        组合思维：返回待创建的任务信息，由Claude会话执行MCP调用
-        """
+    def _create_kanban_tasks(self, requirements):
+        """Stage 3: write task .md files directly to .kanban (plan C)."""
         if not requirements:
             return []
         self.pending_tasks = []
+        try:
+            from kanban_writer import write_task
+        except ImportError:
+            write_task = None
+        try:
+            from business_channels import channel_to_project
+        except ImportError:
+            channel_to_project = lambda _: None
         project_mapping = {
-            "linux-qt-jr": ["qt", "ui"],
-            "wordpress-decoration": ["wordpress"],
-            "MCE": ["mce"],
-            "syc-player": ["player"],
+            "linux-qt-jr": ["qt", "ui", "linux", "ubuntu"],
+            "wordpress-decoration": ["wordpress", "网站", "图片", "装修"],
+            "MCE": ["mce", "medchemexpress", "爬虫"],
+            "syc-player": ["player", "歌词", "音乐", "播放器"],
+            "ai-zs": ["法律", "文书", "合同", "起诉", "律师", "公章", "诉讼", "案件", "ocr", "户籍", "原告", "被告", "委托书", "案由", "条款"],
+            "xiaozhan-emoji-generator": ["表情包", "肖战"],
+            "travel-sentiment-analysis": ["旅游", "评论", "情感", "携程", "微博"],
         }
-        created_tasks = []
+        created = []
         for idx, req in enumerate(requirements, start=1):
             try:
-                project = self._map_requirement_to_project(req, project_mapping)
-                if project:
-                    temp_id = f"pending-{idx}"
-                    task_info = {
-                        'temp_id': temp_id,
-                        'project': project,
-                        'title': req['title'],
-                        'body': req['description'],
-                        'priority': req['priority'],
-                        'tags': req['tags']
-                    }
-                    self.pending_tasks.append(task_info)
-                    created_tasks.append(temp_id)
-            except Exception:
+                src_msg = req.get("source_message") or {}
+                channel = src_msg.get("chatroom") or src_msg.get("sender_wxid")
+                project = channel_to_project(channel) if channel else None
+                if not project:
+                    project = self._map_requirement_to_project(req, project_mapping)
+                if not project:
+                    continue
+                title = (req.get("title") or "no-title")[:120]
+                desc = req.get("description", "")
+                src_time = src_msg.get("time", "")
+                src_room = src_msg.get("chatroom_name") or channel or ""
+                src_sender = src_msg.get("sender", "")
+                body = desc + chr(10) + chr(10) + "## 来源" + chr(10) + "- 时间: " + str(src_time) + chr(10) + "- 群/联系人: " + str(src_room) + chr(10) + "- 发送人: " + str(src_sender)
+                tags = list(req.get("tags") or []) + ["auto-pipeline"]
+                priority = req.get("priority", "medium")
+                if write_task is not None:
+                    tid, fpath = write_task(project, title, body, priority=priority, tags=tags)
+                    self.pending_tasks.append({"task_id": tid, "project": project, "title": title, "file": fpath})
+                    created.append(tid)
+                else:
+                    self.pending_tasks.append({"temp_id": "pending-" + str(idx), "project": project, "title": title, "body": body, "priority": priority, "tags": tags})
+                    created.append("pending-" + str(idx))
+            except Exception as exc:
+                print("create_task fail #" + str(idx) + ":", exc)
                 continue
-        return created_tasks
+        return created
 
     def _map_requirement_to_project(self, req: Dict, project_mapping: Dict) -> Optional[str]:
         text = (req.get("title", "") + " " + req.get("description", "")).lower()
