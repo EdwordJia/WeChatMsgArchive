@@ -69,7 +69,7 @@ class AutoPipeline:
         return "\n".join(lines)
 
     def _fetch_latest_messages(self):
-        """Stage 1: fetch + skip ME + dedup."""
+        """Stage 1: fetch + skip ME + sender whitelist + dedup."""
         self._fetched_unseen = []
         try:
             from business_channels import get_business_channels
@@ -79,6 +79,13 @@ class AutoPipeline:
         try:
             msgs = fetch_recent_messages(hours=24*30, chatroom_filter=whitelist)
             msgs = [m for m in msgs if m.get("is_sender") != 1]
+            try:
+                from business_channels import is_sender_allowed
+                before2 = len(msgs)
+                msgs = [m for m in msgs if is_sender_allowed(m.get("chatroom"), m.get("sender_wxid", ""))]
+                print("[sender_filter] " + str(before2) + " -> " + str(len(msgs)))
+            except ImportError:
+                pass
         except Exception as exc:
             print("fetch failed:", exc)
             return []
@@ -92,6 +99,7 @@ class AutoPipeline:
             print("dedup filter skipped:", exc)
             self._fetched_unseen = msgs
         return msgs
+
     def _identify_requirements(self, messages: List[Dict]) -> List[Dict]:
         if not messages:
             return []

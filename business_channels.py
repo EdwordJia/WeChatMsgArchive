@@ -28,7 +28,7 @@ def channel_to_project(channel_id):
 # Empty list = no restriction (any non-ME counts)
 CHANNEL_SENDER_WHITELIST = {
     # 4.21ai训练管理：客户/产品对接人发的才是真需求
-    "49734720477@chatroom": [],  # TODO: collect actual customer wxids by sniffing BytesExtra
+    "49734720477@chatroom": ["25984982369994080@openim"],  # 刘皓明（决策方），通过 BytesExtra 解析得到
     # private chats: only the contact themselves
     "wxid_tm60ob3bb94x22": ["wxid_tm60ob3bb94x22"],
     "wxid_5pppo6f5tpgz22": ["wxid_5pppo6f5tpgz22"],

@@ -27,9 +27,9 @@ def query_one_db(p, cutoff, flt, nicks):
         cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='MSG'")
         if not cur.fetchone():
             return out
-        sql = "SELECT CreateTime, StrContent, StrTalker, Type, IsSender FROM MSG WHERE CreateTime > ? AND StrTalker LIKE '%@chatroom' ORDER BY CreateTime DESC LIMIT 500"
+        sql = "SELECT CreateTime, StrContent, StrTalker, Type, IsSender, BytesExtra FROM MSG WHERE CreateTime > ? AND StrTalker LIKE '%@chatroom' ORDER BY CreateTime DESC LIMIT 500"
         cur.execute(sql, (cutoff,))
-        for ct, raw, tk, mt, snd in cur.fetchall():
+        for ct, raw, tk, mt, snd, bx in cur.fetchall():
             if flt and tk not in flt:
                 continue
             wxid = ""
@@ -40,6 +40,14 @@ def query_one_db(p, cutoff, flt, nicks):
                 if head.startswith("wxid_") or len(head) <= 32:
                     wxid = head
                     body = rest
+            if not wxid and snd == 0 and bx:
+                import re as _re
+                _chunks = _re.findall(rb"[\w@\-\.]{6,40}", bx[:300])
+                for _c in _chunks:
+                    s = _c.decode("utf-8", errors="ignore")
+                    if s.startswith("wxid_") or s.endswith("@openim") or s.endswith("@chatroom"):
+                        wxid = s
+                        break
             if snd == 1:
                 sname = "ME"
             elif wxid:
