@@ -16,6 +16,7 @@ sys.path.insert(0, str(claude_dir))
 
 from state_manager import ProjectState
 from project_manager import ProjectManager
+from wechat_message_fetcher import fetch_recent_messages
 
 
 class AutoPipeline:
@@ -62,13 +63,11 @@ class AutoPipeline:
         """
         获取微信群最新消息
 
-        组合思维：调用现有的wechat-data MCP工具
+        组合思维：调用现有的wechat_message_fetcher模块
         """
         try:
-            # TODO: 调用wechat-data MCP获取最近24小时的群消息
-            # 示例：mcp__wechat_data__query_recent_messages(hours=24)
-            # 暂时返回空列表，等待MCP集成
-            return []
+            messages = fetch_recent_messages(hours=24)
+            return messages
         except Exception as e:
             print(f"Failed to fetch messages: {e}")
             return []
