@@ -27,10 +27,10 @@ class LLMRequirementAnalyzer:
     """基于 LLM 的需求分析器"""
 
     def __init__(self, api_key: Optional[str] = None):
-      """
-      初始化分析器
+        """
+        初始化分析器
 
-    Args:
+        Args:
             api_key: Anthropic API Key（默认从环境变量读取）
         """
         self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
@@ -38,10 +38,10 @@ class LLMRequirementAnalyzer:
             logger.warning("未配置 ANTHROPIC_API_KEY，将使用规则模式")
             self.client = None
         else:
-       self.client = Anthropic(api_key=self.api_key)
+            self.client = Anthropic(api_key=self.api_key)
 
         # 规则模式的关键词（作为降级方案）
-      self.bug_keywords = ["崩溃", "闪退", "报错", "失败", "不行", "无效", "异常", "bug"]
+        self.bug_keywords = ["崩溃", "闪退", "报错", "失败", "不行", "无效", "异常", "bug"]
         self.requirement_keywords = ["需要", "希望", "能不能", "建议", "增加", "优化", "改进"]
 
     def analyze_message(self, message: str, context: Optional[List[str]] = None) -> Dict:
@@ -125,7 +125,7 @@ class LLMRequirementAnalyzer:
             return result
 
         except json.JSONDecodeError as e:
-        logger.error(f"LLM 响应解析失败: {e}")
+            logger.error(f"LLM 响应解析失败: {e}")
             return self._analyze_with_rules(message)
         except Exception as e:
             logger.error(f"LLM API 调用失败: {e}")
@@ -166,18 +166,18 @@ class LLMRequirementAnalyzer:
                 "type": "other",
                 "priority": "low",
          "title": "",
-                "description": ",
+                "description": "",
                 "tags": [],
                 "confidence": 0.3,
                 "reasoning": "未匹配到需求关键词"
             }
 
     def batch_analyze(self, messages: List[Dict[str, str]], threshold: float = 0.7) -> List[Dict]:
-      """
+        """
         批量分析消息
 
         Args:
-          messages: 消息列表 [{"content": "...", "sender": "...", "time": "..."}]
+            messages: 消息列表 [{"content": "...", "sender": "...", "time": "..."}]
             threshold: 置信度阈值，低于此值的结果将被过滤
         Returns:
             识别出的需求列表
@@ -191,9 +191,9 @@ class LLMRequirementAnalyzer:
             result = self.analyze_message(msg["content"], context)
 
             # 过滤低置信度结果
-          if result["is_requirement"] and result["confidence"] >= threshold:
-         result["source_message"] = msg
-            results.append(result)
+            if result["is_requirement"] and result["confidence"] >= threshold:
+                result["source_message"] = msg
+                results.append(result)
 
         logger.info(f"✓ 批量分析完成: {len(messages)} 条消息 → {len(results)} 个需求")
         return results
