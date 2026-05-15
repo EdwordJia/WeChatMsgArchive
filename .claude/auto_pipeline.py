@@ -49,6 +49,12 @@ class AutoPipeline:
 
         executions = self._start_executions(assignments)
         lines.append(f"[5/5] Executions started: {len(executions)}")
+        try:
+            from dedup_state import mark_seen
+            mark_seen(getattr(self, "_fetched_unseen", []))
+        except Exception as exc:
+            print("dedup mark_seen failed:", exc)
+
         self._save_log({
             "timestamp": datetime.now().isoformat(),
             "mode": mode,
@@ -63,7 +69,8 @@ class AutoPipeline:
         return "\n".join(lines)
 
     def _fetch_latest_messages(self):
-        """Stage 1: fetch business-channel messages, skip ME-sent."""
+        """Stage 1: fetch + skip ME + dedup."""
+        self._fetched_unseen = []
         try:
             from business_channels import get_business_channels
             whitelist = get_business_channels()
@@ -72,10 +79,19 @@ class AutoPipeline:
         try:
             msgs = fetch_recent_messages(hours=24*30, chatroom_filter=whitelist)
             msgs = [m for m in msgs if m.get("is_sender") != 1]
-            return msgs
         except Exception as exc:
             print("fetch failed:", exc)
             return []
+        try:
+            from dedup_state import filter_unseen
+            before = len(msgs)
+            msgs = filter_unseen(msgs)
+            self._fetched_unseen = msgs
+            print("[dedup] " + str(before) + " total -> " + str(len(msgs)) + " unseen")
+        except Exception as exc:
+            print("dedup filter skipped:", exc)
+            self._fetched_unseen = msgs
+        return msgs
     def _identify_requirements(self, messages: List[Dict]) -> List[Dict]:
         if not messages:
             return []
@@ -179,30 +195,32 @@ class AutoPipeline:
                 assignments[task_id] = "kimi"
         return assignments
 
-    def _start_executions(self, assignments: Dict[str, str]) -> List[str]:
-        """
-        启动Agent执行分配的任务
-
-        组合思维：返回待启动的执行信息，由Claude会话执行MCP调用
-        """
+    def _start_executions(self, assignments):
+        """Stage 5: queue runtime executions (require_approval=true by default)."""
         if not assignments:
             return []
         self.pending_executions = []
-        executions = []
-        for idx, (task_id, agent_name) in enumerate(assignments.items(), start=1):
+        try:
+            from runtime_starter import queue_runtime
+        except ImportError:
+            queue_runtime = None
+        task_meta = {t.get("task_id", t.get("temp_id")): t for t in (self.pending_tasks or [])}
+        started = []
+        for task_id, agent_name in assignments.items():
             try:
-                temp_id = f"exec-{idx}"
-                execution_info = {
-                    'temp_id': temp_id,
-                    'task_id': task_id,
-                    'agent': agent_name
-                }
-                self.pending_executions.append(execution_info)
-                executions.append(temp_id)
-            except Exception:
+                meta = task_meta.get(task_id, {})
+                project = meta.get("project", "WeChatMsgArchive")
+                title = meta.get("title", "")
+                if queue_runtime is not None:
+                    entry = queue_runtime(task_id=task_id, project=project, title=title, agent=agent_name, require_approval=True, run_reason="auto-pipeline")
+                    self.pending_executions.append(entry)
+                else:
+                    self.pending_executions.append({"task_id": task_id, "agent": agent_name})
+                started.append(task_id)
+            except Exception as exc:
+                print("queue_runtime fail:", exc)
                 continue
-        return executions
-
+        return started
     def _save_log(self, log_data: Dict):
         with open(self.log_file, "a", encoding="utf-8") as f:
             f.write(json.dumps(log_data, ensure_ascii=False) + "\n")
