@@ -102,24 +102,33 @@ class AutoPipeline:
         """
         将需求转换为看板任务
 
-        组合思维：调用现有的kanban-doc MCP工具
+        组合思维：返回待创建的任务信息，由Claude会话执行MCP调用
         """
         if not requirements:
             return []
-        created_tasks = []
+        self.pending_tasks = []
         project_mapping = {
             "linux-qt-jr": ["qt", "ui"],
             "wordpress-decoration": ["wordpress"],
             "MCE": ["mce"],
             "syc-player": ["player"],
         }
-        for req in requirements:
+        created_tasks = []
+        for idx, req in enumerate(requirements, start=1):
             try:
                 project = self._map_requirement_to_project(req, project_mapping)
                 if project:
-                    # TODO: 调用kanban-doc MCP创建任务卡片
-                    task_id = f"task-{len(created_tasks) + 1}"
-                    created_tasks.append(task_id)
+                    temp_id = f"pending-{idx}"
+                    task_info = {
+                        'temp_id': temp_id,
+                        'project': project,
+                        'title': req['title'],
+                        'body': req['description'],
+                        'priority': req['priority'],
+                        'tags': req['tags']
+                    }
+                    self.pending_tasks.append(task_info)
+                    created_tasks.append(temp_id)
             except Exception:
                 continue
         return created_tasks
@@ -154,16 +163,22 @@ class AutoPipeline:
         """
         启动Agent执行分配的任务
 
-        组合思维：调用Agent工具启动子代理
+        组合思维：返回待启动的执行信息，由Claude会话执行MCP调用
         """
         if not assignments:
             return []
+        self.pending_executions = []
         executions = []
-        for task_id, agent in assignments.items():
+        for idx, (task_id, agent_name) in enumerate(assignments.items(), start=1):
             try:
-                # TODO: 调用Agent工具启动子代理执行
-                execution_id = f"exec-{task_id}-{agent}"
-                executions.append(execution_id)
+                temp_id = f"exec-{idx}"
+                execution_info = {
+                    'temp_id': temp_id,
+                    'task_id': task_id,
+                    'agent': agent_name
+                }
+                self.pending_executions.append(execution_info)
+                executions.append(temp_id)
             except Exception:
                 continue
         return executions
