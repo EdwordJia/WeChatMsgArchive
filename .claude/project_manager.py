@@ -56,7 +56,7 @@ class ProjectManager:
         3. 分析客户聊天记录（微信/企业微信/飞书）
         4. 识别新需求 → 创建任务
         5. 分配任务给Kimi/Codex
-   6. 生成每日摘要
+        6. 生成每日摘要
         """
         lines = []
         lines.append("=" * 60)
@@ -66,16 +66,16 @@ class ProjectManager:
 
         # 步骤1: 恢复状态
         lines.append("📂 [1/6] 恢复会话状态...")
-     if self.state.load_snapshot():
-         lines.append("✅ 状态恢复成功")
+        if self.state.load_snapshot():
+            lines.append("✅ 状态恢复成功")
             if self.state.last_sync_time:
                 elapsed = datetime.now() - self.state.last_sync_time
                 hours = int(elapsed.total_seconds() // 3600)
-              minutes = int((elapsed.total_seconds() % 3600) // 60)
+                minutes = int((elapsed.total_seconds() % 3600) // 60)
                 lines.append(f"   距离上次同步: {hours}小时{minutes}分钟")
         else:
-       lines.append("⚠️  首次运行，初始化新会话")
-         self._initialize_session()
+            lines.append("⚠️  首次运行，初始化新会话")
+            self._initialize_session()
 
         # 步骤2: 同步kanban-doc
         lines.append("\n📋 [2/6] 同步kanban-doc任务...")
@@ -83,7 +83,7 @@ class ProjectManager:
         lines.append("   → 使用 mcp__kanban-doc__list_available")
         lines.append("   ⚠️  需要在Claude会话中调用MCP工具")
 
-      # 步骤3: 分析客户消息
+        # 步骤3: 分析客户消息
         lines.append("\n💬 [3/6] 分析客户聊天记录...")
         lines.append("   → 微信: 使用wechat-data MCP")
         lines.append("   → 企业微信: 待验证（阶段1）")
@@ -96,10 +96,10 @@ class ProjectManager:
         lines.append("   → 自动创建kanban任务")
         lines.append("   ⚠️  待集成（阶段3）")
 
-   # 步骤5: 分配任务
-      lines.append("\n🎯 [5/6] 分配任务给agent...")
+        # 步骤5: 分配任务
+        lines.append("\n🎯 [5/6] 分配任务给agent...")
         lines.append("   → 文件/数据/文档类 → 调用Kimi（Agent tool）")
-    lines.append("   → 代码/算法/测试类 → 调用Codex（Agent tool）")
+        lines.append("   → 代码/算法/测试类 → 调用Codex（Agent tool）")
         lines.append("   → 使用 mcp__kanban-doc__start_runtime 启动执行")
         lines.append("   ⚠️  需要在Claude会话中调用Agent tool")
 
@@ -124,7 +124,7 @@ class ProjectManager:
     def _initialize_session(self):
         """初始化新会话"""
         self.state.current_session = SessionContext(
-          session_id=self.current_session_id,
+            session_id=self.current_session_id,
             started_at=datetime.now(),
             last_sync_at=datetime.now(),
             current_focus=None,
@@ -136,7 +136,7 @@ class ProjectManager:
         智能分配任务给agent
 
         根据任务描述判断应该调用Kimi还是Codex。
-      返回建议的agent类型和调用方式。
+        返回建议的agent类型和调用方式。
 
         Args:
             task_description: 任务描述
@@ -155,7 +155,7 @@ class ProjectManager:
 
         # Codex关键词
         codex_keywords = [
-         '代码', '算法', '函数', '类', '测试', 'bug', '性能', '优化',
+            '代码', '算法', '函数', '类', '测试', 'bug', '性能', '优化',
             'code', 'algorithm', 'function', 'class', 'test', 'debug',
             '重构', '审查', 'review', 'refactor'
         ]
@@ -207,15 +207,15 @@ mcp__kanban-doc__start_runtime(
     task="{task_description}"
 )
 ```
-"".format(task_description=task_description)
+""".format(task_description=task_description)
 
     def get_next_steps(self) -> List[str]:
-      """
+        """
         生成下一步建议
 
         基于当前项目状态，建议用户接下来应该做什么。
-      """
-      suggestions = []
+        """
+        suggestions = []
 
         # 检查是否有高优先级任务
         if self.state.pending_tasks:
@@ -229,10 +229,10 @@ mcp__kanban-doc__start_runtime(
         if self.state.last_sync_time:
             elapsed = datetime.now() - self.state.last_sync_time
             if elapsed.total_seconds() > 86400:  # 超过24小时
-           suggestions.append("⏰ 距离上次同步超过24小时，建议运行每日同步")
+                suggestions.append("⏰ 距离上次同步超过24小时，建议运行每日同步")
 
         if not suggestions:
-       suggestions.append("✅ 所有任务进展顺利，暂无紧急事项")
+            suggestions.append("✅ 所有任务进展顺利，暂无紧急事项")
 
         return suggestions
 

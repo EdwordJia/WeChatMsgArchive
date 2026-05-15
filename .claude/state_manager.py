@@ -51,7 +51,7 @@ class Task:
     status: TaskStatus
     priority: str
     created_at: datetime
-  updated_at: datetime
+    updated_at: datetime
     assigned_to: Optional[AgentType] = None
 
     def to_dict(self) -> dict:
@@ -88,7 +88,7 @@ class ProjectStatus:
     def to_dict(self) -> dict:
         data = asdict(self)
         data['last_activity'] = self.last_activity.isoformat()
-      data['active_agents'] = [agent.value for agent in self.active_agents]
+        data['active_agents'] = [agent.value for agent in self.active_agents]
         return data
 
     @classmethod
@@ -112,7 +112,7 @@ class AgentWorkStatus:
         data = asdict(self)
         data['agent_type'] = self.agent_type.value
         data['status'] = self.status.value
-      data['last_activity'] = self.last_activity.isoformat()
+        data['last_activity'] = self.last_activity.isoformat()
         return data
 
     @classmethod
@@ -141,8 +141,9 @@ class SessionContext:
     @classmethod
     def from_dict(cls, data: dict) -> 'SessionContext':
         data['started_at'] = datetime.fromisoformat(data['started_at'])
-      data['last_sync_at'] = datetime.fromisoformat(data['last_sync_at'])
-      return cls(**data)
+        data['last_sync_at'] = datetime.fromisoformat(data['last_sync_at'])
+        return cls(**data)
+
 
 class ProjectState:
     """项目状态管理"""
@@ -162,17 +163,17 @@ class ProjectState:
     def save_snapshot(self) -> None:
         """保存状态快照到文件"""
         snapshot = {
-        'current_session': self.current_session.to_dict() if self.current_session else None,
+            'current_session': self.current_session.to_dict() if self.current_session else None,
             'projects': {name: status.to_dict() for name, status in self.projects.items()},
             'pending_tasks': [task.to_dict() for task in self.pending_tasks],
             'agent_status': {agent.value: status.to_dict() for agent, status in self.agent_status.items()},
             'last_sync_time': self.last_sync_time.isoformat() if self.last_sync_time else None,
             'snapshot_version': '1.0',
-          'created_at': datetime.now().isoformat()
+            'created_at': datetime.now().isoformat()
         }
 
         with open(self.state_file, 'w', encoding='utf-8') as f:
-         json.dump(snapshot, f, indent=2, ensure_ascii=False)
+            json.dump(snapshot, f, indent=2, ensure_ascii=False)
 
     def load_snapshot(self) -> bool:
         """从文件恢复状态"""
@@ -180,33 +181,33 @@ class ProjectState:
             return False
 
         try:
-          with open(self.state_file, 'r', encoding='utf-8') as f:
-           snapshot = json.load(f)
+            with open(self.state_file, 'r', encoding='utf-8') as f:
+                snapshot = json.load(f)
 
             # 恢复会话上下文
             if snapshot.get('current_session'):
-            self.current_session = SessionContext.from_dict(snapshot['current_session'])
+                self.current_session = SessionContext.from_dict(snapshot['current_session'])
 
-          # 恢复项目状态
+            # 恢复项目状态
             self.projects = {
-             name: ProjectStatus.from_dict(data)
+                name: ProjectStatus.from_dict(data)
                 for name, data in snapshot.get('projects', {}).items()
             }
 
-          # 恢复待办任务
+            # 恢复待办任务
             self.pending_tasks = [
                 Task.from_dict(data)
                 for data in snapshot.get('pending_tasks', [])
             ]
 
             # 恢复Agent状态
-          self.agent_status = {
-           AgentType(agent): AgentWorkStatus.from_dict(data)
+            self.agent_status = {
+                AgentType(agent): AgentWorkStatus.from_dict(data)
                 for agent, data in snapshot.get('agent_status', {}).items()
-         }
+            }
 
-       # 恢复同步时间
-        if snapshot.get('last_sync_time'):
+            # 恢复同步时间
+            if snapshot.get('last_sync_time'):
                 self.last_sync_time = datetime.fromisoformat(snapshot['last_sync_time'])
 
             return True
@@ -227,11 +228,11 @@ class ProjectState:
         if self.current_session:
             lines.append(f"\n## 当前会话")
             lines.append(f"- 会话ID: {self.current_session.session_id}")
-          lines.append(f"- 开始时间: {self.current_session.started_at.strftime('%Y-%m-%d %H:%M:%S')}")
+            lines.append(f"- 开始时间: {self.current_session.started_at.strftime('%Y-%m-%d %H:%M:%S')}")
             if self.current_session.current_focus:
-        lines.append(f"- 当前关注: {self.current_session.current_focus}")
-       if self.current_session.next_steps:
-       lines.append(f"- 下一步计划:")
+                lines.append(f"- 当前关注: {self.current_session.current_focus}")
+            if self.current_session.next_steps:
+                lines.append(f"- 下一步计划:")
                 for step in self.current_session.next_steps:
                     lines.append(f"  - {step}")
 
@@ -243,26 +244,26 @@ class ProjectState:
             lines.append(f"- 待办: {status.todo_count} | 进行中: {status.inprogress_count} | 审查中: {status.inreview_count} | 已完成: {status.done_count}")
             lines.append(f"- 最后活动: {status.last_activity.strftime('%Y-%m-%d %H:%M:%S')}")
             if status.active_agents:
-           agents = ', '.join([agent.value for agent in status.active_agents])
+                agents = ', '.join([agent.value for agent in status.active_agents])
                 lines.append(f"- 活跃Agent: {agents}")
 
         # 待办任务
         if self.pending_tasks:
             lines.append(f"\n## 待办任务 ({len(self.pending_tasks)}个)")
-         for task in self.pending_tasks[:10]:  # 只显示前10个
+            for task in self.pending_tasks[:10]:  # 只显示前10个
                 lines.append(f"\n### [{task.project}] {task.title}")
                 lines.append(f"- 任务ID: {task.task_id}")
-           lines.append(f"- 状态: {task.status.value} | 优先级: {task.priority}")
-             if task.assigned_to:
-                  lines.append(f"- 分配给: {task.assigned_to.value}")
+                lines.append(f"- 状态: {task.status.value} | 优先级: {task.priority}")
+                if task.assigned_to:
+                    lines.append(f"- 分配给: {task.assigned_to.value}")
                 lines.append(f"- 描述: {task.description[:100]}...")
 
         # Agent状态
         lines.append(f"\n## Agent状态")
         for agent_type, status in self.agent_status.items():
             lines.append(f"\n### {agent_type.value}")
-         lines.append(f"- 状态: {status.status.value}")
-          if status.current_task:
+            lines.append(f"- 状态: {status.status.value}")
+            if status.current_task:
                 lines.append(f"- 当前任务: {status.current_task} ({status.current_project})")
             lines.append(f"- 今日完成: {status.completed_today}个任务")
             lines.append(f"- 最后活动: {status.last_activity.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -272,25 +273,25 @@ class ProjectState:
     def update_from_kanban(self, kanban_data: dict) -> None:
         """从kanban-doc数据更新状态"""
         # 这个方法将在集成kanban-doc时实现
-      pass
+        pass
 
     def sync_agent_status(self, agent_type: AgentType, status: AgentStatus,
-                     current_task: Optional[str] = None,
-         current_project: Optional[str] = None) -> None:
+                          current_task: Optional[str] = None,
+                          current_project: Optional[str] = None) -> None:
         """同步Agent状态"""
         if agent_type not in self.agent_status:
             self.agent_status[agent_type] = AgentWorkStatus(
                 agent_type=agent_type,
                 status=status,
-          current_task=current_task,
+                current_task=current_task,
                 current_project=current_project,
-             last_activity=datetime.now(),
+                last_activity=datetime.now(),
                 completed_today=0
             )
         else:
             agent = self.agent_status[agent_type]
             agent.status = status
-        agent.current_task = current_task
+            agent.current_task = current_task
             agent.current_project = current_project
             agent.last_activity = datetime.now()
 
@@ -348,7 +349,7 @@ if __name__ == "__main__":
     manager.sync_agent_status(
         AgentType.CODEX,
         AgentStatus.IDLE
-  )
+    )
 
     # 保存快照
     manager.save_snapshot()
