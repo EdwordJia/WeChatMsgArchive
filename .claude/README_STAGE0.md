@@ -1,342 +1,373 @@
-# 阶段0：基础设施实现
+# 阶段0：单会话AI项目管理系统
 
-> 实施日期：2026-05-15
-> 目标：建立状态管理和Agent协调机制，支持每日对话快速恢复上下文
+> **核心理念**：用户只开一个Claude Code会话，Claude作为项目经理自动处理一切
 
 ---
 
-## 📦 交付物
+## 🎯 用户场景
 
-### 核心组件
+```
+你（老板）────→ Claude（项目经理，当前会话）
+                ↓
+                自动处理：
+            1. 监听客户消息（微信/企业微信/飞书）
+                2. 识别需求 → 创建kanban任务
+              3. 分配给Kimi/Codex → 在当前会话中调用
+                4. 监控执行 → 汇报结果
 
-1. **StateManager** (`.claude/state_manager.py`)
-   - 项目状态持久化与恢复
-   - 支持会话上下文、项目状态、待办任务、Agent状态
-   - JSON格式存储，快速加载（< 1秒）
-   - 自动生成每日摘要
-
-2. **AgentCoordinator** (`.claude/agent_coordinator.py`)
-   - 智能任务分配（Kimi vs Codex）
-   - 任务执行与监控
-   - 执行历史记录
-   - Agent统计分析
-
-3. **DailySync** (`.claude/daily_sync.py`)
-   - 每日对话流程入口
-   - 5步同步流程：恢复状态 → 同步kanban → 分析消息 → 生成摘要 → 提供建议
-   - 目标耗时 < 30秒
-
-4. **测试脚本** (`.claude/test_stage0.py`)
-   - 完整的组件测试
-   - 验证状态持久化和恢复
-   - 验证任务分配逻辑
+             你只需要：
+                - 每天说"同步状态"
+      - 做决策（批准/拒绝方案）
+                - 对接客户
+```
 
 ---
 
 ## 🏗️ 架构设计
 
+### 为什么删除了AgentCoordinator？
+
+**原因**：kanban-doc已经有完整的agent调度功能，不需要重复造轮子。
+
+kanban-doc提供的功能：
+- `call_agent` - 调用单个agent
+- `call_agents_parallel` - 并行调用多个agent
+- `start_runtime` - 启动runtime执行
+- `get_runtime` - 监控执行状态
+- `list_runtime_processes` - 查看所有执行进程
+
+### 新架构
+
 ```
-┌────────────────────────┐
-│         用户交互层（Claude Code）          │
-│  每日对话入口: python -m .claude.daily_sync  │
-└────────────────┬────────────────────┘
-                 ↓
-┌─────────────────────────────┐
-│         状态管理层（StateManager）         │
-│  • ProjectState: 项目状态快照              │
-│  • SessionContext: 会话上下文              │
-│  • AgentWorkStatus: Agent工作日志       │
-│  存储: .claude/state/project_state.json    │
-└────────────────┬───────────────┘
-             ↓
-┌────────────────────────────────┐
-│       任务协调层（AgentCoordinator）       │
-│  • 智能任务分配（Kimi/Codex）              │
-│  • 任务执行与监控                 │
-│  • 执行历史与统计                        │
-└────────────────┬─────────────┘
-          ↓
-┌───────────────────┐
-│         执行层（Agent团队）          │
-│  • Kimi: 文件/数据/文档处理                │
-│  • Codex: 代码/算法/测试           │
-└───────────────────────────────┘
+┌──────────────────────────────────────┐
+│      用户 - 只开一个会话                      │
+│   "同步状态" / "看看进度" / "批准这个方案"          │
+└─────────────┬────────────────────────────┘
+                ↓
+┌──────────────────────────────┐
+│    Claude（项目经理 - 当前会话中）              │
+│  1. 每日同步：拉取kanban任务 + 分析客户消息       │
+│  2. 需求识别：从聊天记录中提取需求 → 创建任务     │
+│  3. 任务分配：判断任务类型 → 调用Kimi/Codex      │
+│  4. 执行监控：在当前会话中跟踪agent状态           │
+│  5. 结果汇报：整理agent输出 → 向用户汇报         │
+└──────┬──────────┬───────────┬────────────┘
+       ↓              ↓            ↓
+┌──────────┐  ┌────────────┐  ┌──────────────┐
+│StateManager│ │kanban-doc  │  │多平台数据源   │
+│(会话快照)  │ │(任务+agent)│  │(微信/企微/飞书)│
+└──────────┘  └────────────┘  └────────────┘
+                  ↓
+          ┌─────┴─────┐
+          ↓           ↓
+         ┌────────┐  ┌────────┐
+      │  Kimi  │  │ Codex  │
+         │(通过MCP)│  │(通过MCP)│
+         └────────┘  └────────┘
 ```
+
+---
+
+## 📦 核心组件
+
+### 1. ProjectManager（`.claude/project_manager.py`）
+
+**职责**：在当前会话中管理所有项目和agent
+
+**核心方法**：
+
+```python
+# 每日同步（6步流程）
+manager.daily_sync()
+
+# 智能分配任务
+manager.assign_task_to_agent("批量处理Word文档")
+# → 返回建议的agent和调用方式
+
+# 获取下一步建议
+manager.get_next_steps()
+# → 返回待办事项列表
+```
+
+### 2. StateManager（`.claude/state_manager.py`）
+
+**职责**：会话状态持久化，支持快速恢复上下文
+
+**数据模型**：
+- `SessionContext` - 会话上下文
+- `ProjectStatus` - 项目状态快照
+- `Task` - 任务模型
+- `AgentWorkStatus` - Agent工作日志
+
+**存储位置**：`.claude/state/project_state.json`
 
 ---
 
 ## 🚀 使用方法
 
-### 1. 运行测试
+### 方式1：在Claude会话中直接对话
+
+```
+你: 同步一下项目状态
+
+Claude:
+📂 恢复会话状态... ✅
+📋 同步kanban-doc任务...
+   发现3个高优先级任务：
+   - [wordpress-decoration] 整合图片素材
+   - [MCE] 爬虫性能优化
+   - [syc-player] 修复播放问题
+
+💡 建议：
+   1. 整合图片素材 → 分配给Kimi
+   2. 爬虫性能优化 → 分配给Codex
+
+你要我现在就分配任务吗？
+```
+
+### 方式2：运行Python脚本
 
 ```bash
-# 测试核心组件
-python -m .claude.test_stage0
-```
-
-### 2. 每日同步
-
-```bash
-# 每天早上运行此命令
-python -m .claude.daily_sync
-```
-
-输出示例：
-```
-================================================
-🌅 AI项目管理系统 - 每日同步
-=================================================
-
-同步时间: 2026-05-15 09:00:00
-
-📂 [1/5] 恢复项目状态...
-✅ 状态恢复成功
-   距离上次同步: 16小时30分钟
-
-📋 [2/5] 同步kanban-doc任务...
-⚠️  kanban-doc集成待实现（阶段0暂不包含）
-
-💬 [3/5] 分析客户聊天记录...
-⚠️  消息分析待实现（阶段1-2）
-   - 微信: 已支持（需要运行解密）
-   - 企业微信: 待验证
-   - 飞书: 待开发
-
-📊 [4/5] 生成项目摘要...
-✅ 摘要已生成
-
-💡 [5/5] 生成下一步建议...
-🔥 高优先级任务:
-   - [wordpress-decoration] 整合密码机提供的图片素材到网页
-     建议分配给: kimi
-   - [MCE] MCE官网产品数据爬取
-     建议分配给: codex
-
-💼 可用Agent: kimi, codex
-   建议立即分配任务
-
-⏱️  总耗时: 2.35秒
-========================================
-
-📄 详细摘要已保存到: .claude/state/daily_summary.md
-```
-
-### 3. 手动操作状态
-
-```python
-from .claude.state_manager import state_manager, TaskStatus, AgentType, AgentStatus
-
-# 加载状态
-state_manager.load_snapshot()
-
-# 查看项目
-for name, status in state_manager.projects.items():
-    print(f"{name}: {status.total_tasks}个任务")
-
-# 同步Agent状态
-state_manager.sync_agent_status(
-    AgentType.KIMI,
-    AgentStatus.BUSY,
-    current_task="e278",
-    current_project="wordpress-decoration"
-)
-
-# 保存状态
-state_manager.save_snapshot()
-
-# 生成摘要
-print(state_manager.get_daily_summary())
-```
-
-### 4. 手动分配任务
-
-```python
-from .claude.agent_coordinator import agent_coordinator, TaskType
-
-# 分配任务
-agent = agent_coordinator.assign_task(
-    TaskType.CODE_GENERATION,
-    "实现快速排序算法"
-)
-print(f"分配给: {agent.value}")
-
-# 执行任务
-result = agent_coordinator.execute_task(
-    task_id="test-001",
-    agent=agent,
-    prompt="实现快速排序算法",
-    timeout=60
-)
-
-print(f"状态: {result.status.value}")
-print(f"耗时: {result.duration_seconds:.2f}秒")
-
-# 查看统计
-print(agent_coordinator.get_execution_summary())
+./venv/Scripts/python .claude/project_manager.py
 ```
 
 ---
 
-## 📊 数据模型
+## 🎯 在当前会话中调用Kimi/Codex
 
-### ProjectState
+### 方式1：用Agent tool（推荐）
 
 ```python
-{
-  "current_session": {
-    "session_id": "session-20260515-090000",
-    "started_at": "2026-05-15T09:00:00",
-    "last_sync_at": "2026-05-15T09:00:00",
-    "current_focus": "wordpress-decoration",
-    "next_steps": ["整合图片素材", "通知客户确认"]
-  },
-  "projects": {
-    "wordpress-decoration": {
-      "project_name": "wordpress-decoration",
-      "total_tasks": 3,
-      "todo_count": 1,
-      "inprogress_count": 1,
-      "inreview_count": 1,
-      "done_count": 0,
-      "last_activity": "2026-05-15T08:30:00",
-      "active_agents": ["kimi"]
-    }
-  },
-  "pending_tasks": [
-    {
-    "task_id": "e278",
-      "project": "wordpress-decoration",
-      "title": "整合密码机提供的图片素材到网页",
-      "description": "...",
-      "status": "inprogress",
-      "priority": "high",
-      "created_at": "2026-05-14T10:00:00",
-      "updated_at": "2026-05-15T08:30:00",
-      "assigned_to": "kimi"
-    }
-  ],
-  "agent_status": {
-    "kimi": {
-      "agent_type": "kimi",
-      "status": "busy",
-      "current_task": "e278",
-      "current_project": "wordpress-decoration",
-      "last_activity": "2026-05-15T08:30:00",
-      "completed_today": 2
-    },
-    "codex": {
-      "agent_type": "codex",
-      "status": "idle",
-      "current_task": null,
-      "current_project": null,
-      "last_activity": "2026-05-14T18:00:00",
-      "completed_today": 0
-    }
-  },
-  "last_sync_time": "2026-05-15T09:00:00",
-  "snapshot_version": "1.0",
-  "created_at": "2026-05-15T09:00:00"
-}
+# Claude在当前会话中调用
+Agent(
+    subagent_type="kimi-secretary",
+    prompt="批量处理100个Word文档",
+    description="文档处理任务"
+)
+
+Agent(
+    subagent_type="codex-secretary",
+    prompt="优化爬虫性能，降低内存占用",
+    description="性能优化任务"
+)
+```
+
+### 方式2：用kanban-doc MCP
+
+```python
+# 通过kanban-doc的runtime
+mcp__kanban-doc__start_runtime(
+    project="wordpress-decoration",
+    task_id="e278",
+    cli="kimi",
+    task="整合图片素材到网页"
+)
+
+# 监控执行状态
+mcp__kanban-doc__get_runtime(
+    project="wordpress-decoration",
+    process_id="runtime-001"
+)
+```
+
+### 方式3：用Skill tool
+
+```python
+# 直接调用技能
+Skill(skill="kimi", args="批量处理文档")
+Skill(skill="codex", args="优化爬虫性能")
 ```
 
 ---
 
-## 🎯 任务分配规则
+## 📊 任务分配规则
 
-### Kimi负责的任务类型
+ProjectManager会根据任务描述自动判断应该调用哪个agent：
 
-- `FILE_OPERATION` - 文件操作（批量重命名、移动、压缩）
-- `DATA_PROCESSING` - 数据处理（Excel/CSV清洗、转换）
-- `DOCUMENT` - 文档处理（Word/PDF/LaTeX生成）
-- `WEB_SEARCH` - Web搜索与信息收集
-- `SYSTEM_CONFIG` - 系统配置（环境变量、包安装）
-- `GIT_OPERATION` - Git操作（clone、commit、push）
-- `SHELL_SCRIPT` - Shell脚本与自动化
+| 关键词 | Agent | 原因 |
+|--------|-------|------|
+| 文件、数据、文档、Excel、PDF | Kimi | 广度优先，擅长文件处理 |
+| 代码、算法、测试、性能、bug | Codex | 深度优先，擅长代码工程 |
+| 批量、清洗、转换、搜索 | Kimi | 数据处理和自动化 |
+| 重构、审查、优化、调试 | Codex | 代码质量和性能 |
 
-### Codex负责的任务类型
+**示例**：
 
-- `CODE_GENERATION` - 代码生成与架构设计
-- `ALGORITHM` - 算法设计与优化
-- `CODE_REVIEW` - 代码审查与安全分析
-- `TESTING` - 测试工程（单元测试、集成测试）
-- `REFACTORING` - 代码重构与结构改进
-- `DEBUGGING` - Bug修复与深度调试
-- `PERFORMANCE` - 性能优化
+```python
+manager.assign_task_to_agent("批量处理100个Word文档")
+# → 建议分配给: Kimi
 
-### 智能判断（ANALYSIS/PLANNING）
+manager.assign_task_to_agent("优化爬虫性能，降低内存占用")
+# → 建议分配给: Codex
+```
 
-对于通用任务，通过关键词匹配判断：
-- 包含代码相关关键词 → Codex
-- 包含数据/文件关键词 → Kimi
-- 无法判断 → Kimi（广度优先）
+---
+
+## 🔄 每日工作流
+
+### 早上（9:00）
+
+```
+你: 同步状态
+
+Claude:
+📂 恢复会话状态... ✅ 距离上次同步16小时
+📋 同步kanban-doc... 发现2个新任务
+💬 分析客户消息... 发现3条新需求
+🔍 识别需求... 自动创建任务到kanban
+🎯 分配任务...
+   - [wordpress-decoration] 整合图片 → Kimi
+   - [MCE] 性能优化 → Codex
+📊 生成摘要... 已保存到 .claude/state/daily_summary.md
+
+💡 下一步建议：
+   1. 批准Kimi执行"整合图片"任务
+   2. 批准Codex执行"性能优化"任务
+```
+
+### 中午（12:00）
+
+```
+你: 看看进度
+
+Claude:
+📊 当前状态：
+   - Kimi: 正在执行"整合图片"（进度60%）
+   - Codex: 已完成"性能优化"，等待审查
+
+🔍 Codex的优化方案：
+   - 使用连接池减少数据库连接开销
+   - 异步爬取提升并发性能
+   - 内存占用降低40%
+
+你要我让Kimi继续，还是先审查Codex的方案？
+```
+
+### 晚上（18:00）
+
+```
+你: 今天完成了什么
+
+Claude:
+✅ 今日完成：
+   1. [wordpress-decoration] 整合图片素材 - Kimi完成
+   2. [MCE] 爬虫性能优化 - Codex完成
+   3. [syc-player] 修复播放问题 - Codex完成
+
+📊 统计：
+   - Kimi: 完成1个任务，耗时2.5小时
+   - Codex: 完成2个任务，耗时3.8小时
+
+💬 新消息：
+   - 密码机（wordpress客户）: 确认图片效果满意
+   - 烨林（MCE客户）: 询问爬虫何时交付
+
+💡 明日计划：
+   1. 通知烨林爬虫已优化完成
+   2. 部署wordpress网站给密码机验收
+```
 
 ---
 
 ## ✅ 完成标准
 
-### 最小可行产品（MVP）
+### 阶段0（当前）
 
-用户每天早上打开Claude Code，输入"同步项目状态"，系统能够：
+- [x] StateManager - 会话状态持久化
+- [x] ProjectManager - 单会话管理框架
+- [x] 任务分配规则 - 智能判断Kimi/Codex
+- [ ] kanban-doc集成 - 拉取任务和启动runtime
+- [ ] 多平台数据源 - 微信/企业微信/飞书
 
-1. ✅ 在30秒内恢复上次会话状态
-2. ⚠️ 展示所有项目的最新进度（待集成kanban-doc）
-3. ⚠️ 分析昨天的客户聊天记录（待集成微信数据）
-4. ⚠️ 识别出新需求并创建任务（待集成LLM分析）
-5. ✅ 分配任务给Kimi/Codex（智能分配已实现）
-6. ⚠️ 展示Agent执行状态（基础框架已实现，待实际执行）
-7. ✅ 提供下一步建议
+**完成度**：3/5（60%）
 
-**阶段0完成度**: 3/7 (43%)
+### 阶段1（企业微信验证，1周）
+
+- [ ] 验证企业微信本地解密
+- [ ] 实现WorkWeChatAdapter
+- [ ] 集成到ProjectManager
+
+### 阶段2（飞书集成，2周）
+
+- [ ] 申请飞书企业自建应用
+- [ ] 实现FeishuAdapter
+- [ ] 集成到ProjectManager
+
+### 阶段3（智能需求识别，1周）
+
+- [ ] 集成LLM语义分析
+- [ ] 自动创建kanban任务
+- [ ] 测试准确率
 
 ---
 
-## 🔄 下一步（阶段1）
+## 🎬 快速开始
 
-### 企业微信验证（1周）
+### 1. 测试ProjectManager
 
-**目标**：验证企业微信本地解密方案
+```bash
+cd .claude
+../venv/Scripts/python project_manager.py
+```
 
-**任务清单**：
-- [ ] 在企业微信环境中运行测试
-- [ ] 验证密钥提取是否成功
-- [ ] 解密数据库并分析表结构
-- [ ] 对比个人微信数据库差异
-- [ ] 决策：本地方案 vs API方案
+### 2. 在Claude会话中使用
 
-**交付物**：
-- 企业微信数据库结构文档
-- `WorkWeChatAdapter`（如果本地方案可行）
+```
+你: 帮我同步项目状态
 
+Claude会自动：
+1. 调用 project_manager.daily_sync()
+2. 使用kanban-doc MCP拉取任务
+3. 使用wechat-data MCP分析消息
+4. 生成摘要并提供建议
+```
+
+### 3. 分配任务给agent
+
+```
+你: 有个任务需要批量处理Word文档
+
+Claude会：
+1. 调用 project_manager.assign_task_to_agent()
+2. 判断应该用Kimi
+3. 在当前会话中调用Agent tool
+4. 监控执行并汇报结果
+```
 ---
 
 ## 📝 技术债务
 
-1. **kanban-doc集成**：`DailySync._sync_kanban()` 待实现
-2. **消息分析集成**：`DailySync._analyze_messages()` 待实现
-3. **CLI安装检测**：`AgentCoordinator` 需要检测 kimi/codex CLI 是否安装
-4. **错误恢复**：需要增加降级策略（解密失败、API超时等）
-5. **日志系统**：需要统一的日志记录机制
-6. **单元测试**：需要补充pytest单元测试
+1. **kanban-doc集成**：`ProjectManager.daily_sync()` 需要调用MCP工具
+2. **消息分析集成**：需要调用wechat-data/wxwork/feishu MCP
+3. **LLM需求识别**：需要集成`llm_requirement_analyzer.py`
+4. **自动化触发**：可以用CronCreate定时触发同步
+5. **错误恢复**：需要增加降级策略
 
 ---
 
 ## 🐛 已知问题
 
-1. **CLI依赖**：需要手动安装 `kimi` 和 `codex` CLI
-2. **路径硬编码**：部分路径使用相对路径，可能在不同环境下失败
-3. **异常处理**：部分异常处理不够完善
-4. **性能优化**：状态恢复未做性能测试
+1. **Python语法问题**：`.claude/state_manager.py` 有缩进和中文标点问题，需要修复
+2. **MCP工具调用**：需要在Claude会话中手动调用，暂未自动化
+3. **Agent CLI依赖**：需要确保kimi和codex CLI已安装
 
 ---
 
-## 📚 参考文档
+## 🔄 下一步
 
-- [AI_PROJECT_MANAGER_FEASIBILITY.md](../AI_PROJECT_MANAGER_FEASIBILITY.md) - 完整可行性分析
-- [config.py](../config.py) - 统一配置管理
-- [CLAUDE.md](../../.claude/CLAUDE.md) - 委派策略
+1. **修复语法**：清理`.claude/state_manager.py`的缩进问题
+2. **集成kanban-doc**：在`ProjectManager.daily_sync()`中调用MCP工具
+3. **测试单会话管理**：验证在当前会话中调用Kimi/Codex
+4. **进入阶段1**：企业微信本地解密验证
 
 ---
+
+**设计理念**：
+- ❌ 不要重复造轮子（删除AgentCoordinator）
+- ✅ 直接用kanban-doc的runtime功能
+- ✅ 在当前会话中管理所有agent
+- ✅ 用户只需要对话，不需要切换会话
 
 **评估人**：Claude
 **实施日期**：2026-05-15
-**状态**：✅ 阶段0基础设施已完成，待测试验证
+**状态**：✅ 架构重构完成，待集成测试
