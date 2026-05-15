@@ -21,3 +21,29 @@ def get_business_channels():
 def channel_to_project(channel_id):
     """Return kanban project name for a chatroom/wxid, or None if unknown."""
     return CHANNEL_TO_PROJECT.get(channel_id)
+
+
+
+# Per-channel sender whitelist (only these wxids' messages count as requirements)
+# Empty list = no restriction (any non-ME counts)
+CHANNEL_SENDER_WHITELIST = {
+    # 4.21ai训练管理：客户/产品对接人发的才是真需求
+    "49734720477@chatroom": [],  # TODO: collect actual customer wxids by sniffing BytesExtra
+    # private chats: only the contact themselves
+    "wxid_tm60ob3bb94x22": ["wxid_tm60ob3bb94x22"],
+    "wxid_5pppo6f5tpgz22": ["wxid_5pppo6f5tpgz22"],
+    "wxid_7070920730612": ["wxid_7070920730612"],
+    "wxid_xi8r819u9oso22": ["wxid_xi8r819u9oso22"],
+}
+
+
+def is_sender_allowed(channel_id, sender_wxid):
+    """Check if a sender's message in a channel should be considered.
+
+    Returns True if sender is whitelisted or no whitelist defined."""
+    wl = CHANNEL_SENDER_WHITELIST.get(channel_id)
+    if wl is None:
+        return True  # channel not configured: allow
+    if not wl:
+        return True  # empty list: no per-sender filter
+    return sender_wxid in wl

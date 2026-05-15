@@ -159,7 +159,7 @@ class AutoPipeline:
                 priority = req.get("priority", "medium")
                 if write_task is not None:
                     tid, fpath = write_task(project, title, body, priority=priority, tags=tags)
-                    self.pending_tasks.append({"task_id": tid, "project": project, "title": title, "file": fpath})
+                    self.pending_tasks.append({"task_id": tid, "project": project, "title": title, "file": fpath, "tags": tags, "priority": priority})
                     created.append(tid)
                 else:
                     self.pending_tasks.append({"temp_id": "pending-" + str(idx), "project": project, "title": title, "body": body, "priority": priority, "tags": tags})
@@ -212,7 +212,13 @@ class AutoPipeline:
                 project = meta.get("project", "WeChatMsgArchive")
                 title = meta.get("title", "")
                 if queue_runtime is not None:
-                    entry = queue_runtime(task_id=task_id, project=project, title=title, agent=agent_name, require_approval=True, run_reason="auto-pipeline")
+                    tags = meta.get("tags") or []
+                    try:
+                        from runtime_starter import decide_approval
+                        need_approval = decide_approval(tags)
+                    except Exception:
+                        need_approval = True
+                    entry = queue_runtime(task_id=task_id, project=project, title=title, agent=agent_name, require_approval=need_approval, run_reason="auto-pipeline")
                     self.pending_executions.append(entry)
                 else:
                     self.pending_executions.append({"task_id": task_id, "agent": agent_name})

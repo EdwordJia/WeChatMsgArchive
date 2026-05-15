@@ -26,6 +26,23 @@ def _save(state):
     QUEUE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+
+
+# Tags that DO NOT require approval (safe analysis-only)
+SAFE_TAGS = {"analysis", "ocr", "knowledge-base", "form", "review-panel", "ux", "self-test"}
+# Tags that ALWAYS require approval (code/infra changes)
+REQUIRE_APPROVAL_TAGS = {"infra", "reliability", "deploy", "template", "seal", "naming", "rpa", "scale", "performance"}
+
+
+def decide_approval(tags):
+    """Auto-decide require_approval based on tags."""
+    tags = set(tags or [])
+    if tags & REQUIRE_APPROVAL_TAGS:
+        return True
+    if tags <= SAFE_TAGS:
+        return False
+    return True  # default: safer
+
 def queue_runtime(task_id, project, title, agent="codex", require_approval=True, run_reason="auto-pipeline"):
     """Queue a runtime execution for downstream MCP invocation."""
     state = _load()
