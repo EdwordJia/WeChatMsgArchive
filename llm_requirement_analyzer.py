@@ -26,23 +26,40 @@ logger = logging.getLogger(__name__)
 class LLMRequirementAnalyzer:
     """基于 LLM 的需求分析器"""
 
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, api_key: Optional[str] = None, base_url: Optional[str] = None, model: Optional[str] = None):
         """
         初始化分析器
 
         Args:
-            api_key: Anthropic API Key（默认从环境变量读取）
+            api_key: Anthropic API Key（默认从环境变量读取 ANTHROPIC_API_KEY 或 ANTHROPIC_AUTH_TOKEN）
+            base_url: API Base URL（默认从环境变量读取 ANTHROPIC_BASE_URL）
+            model: 模型名称（默认从环境变量读取 ANTHROPIC_MODEL）
         """
-        self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
+        # 读取 API Key（支持两个环境变量）
+        self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN")
+
+        # 读取 Base URL
+        self.base_url = base_url or os.getenv("ANTHROPIC_BASE_URL")
+
+        # 读取模型名称
+        self.model = model or os.getenv("ANTHROPIC_MODEL") or "claude-opus-4-20250514"
+
         if not self.api_key:
-            logger.warning("未配置 ANTHROPIC_API_KEY，将使用规则模式")
+            logger.warning("未配置 ANTHROPIC_API_KEY 或 ANTHROPIC_AUTH_TOKEN，将使用规则模式")
             self.client = None
         else:
-            self.client = Anthropic(api_key=self.api_key)
+            # 如果有 base_url，使用自定义端点（如 DeepSeek）
+            if self.base_url:
+                logger.info(f"使用自定义 API 端点: {self.base_url}, 模型: {self.model}")
+                self.client = Anthropic(api_key=self.api_key, base_url=self.base_url)
+            else:
+                logger.info(f"使用默认 Anthropic API, 模型: {self.model}")
+                self.client = Anthropic(api_key=self.api_key)
 
         # 规则模式的关键词（作为降级方案）
         self.bug_keywords = ["崩溃", "闪退", "报错", "失败", "不行", "无效", "异常", "bug", "用不了", "服务器问题", "无法", "出错", "卡住", "死机", "没反应", "丢了", "丢失", "错乱", "重复", "缺失", "不对", "有问题"]
         self.requirement_keywords = ["需要", "希望", "能不能", "建议", "增加", "优化", "改进", "可以吗", "能否", "支持", "新增", "调整", "修改", "改成", "改为", "替换", "应该", "麻烦"]
+
     def analyze_message(self, message: str, context: Optional[List[str]] = None) -> Dict:
         """
         分析消息，识别需求/Bug
@@ -110,14 +127,27 @@ class LLMRequirementAnalyzer:
 
         try:
             response = self.client.messages.create(
-                model="claude-opus-4-20250514",
+                model=self.model,
                 max_tokens=1024,
                 system=system_prompt,
                 messages=[{"role": "user", "content": user_prompt}]
-       )
+            )
 
-            # 解析 JSON 响应
-            content = response.content[0].text
+            # 解析 JSON 响应（支持 DeepSeek 的 ThinkingBlock）
+            # 处理 DeepSeek 的 ThinkingBlock 和 TextBlock
+            content = None
+            for block in response.content:
+                if hasattr(block, 'text'):
+                    content = block.text
+                    break
+                elif hasattr(block, 'type') and block.type == 'text':
+                    content = block.text
+                    break
+
+            if not content:
+                logger.error("无法从响应中提取文本内容")
+                return self._analyze_with_rules(message)
+
             result = json.loads(content)
 
             logger.info(f"✓ LLM 分析完成: {result['type']} | {result['priority']} | 置信度 {result['confidence']:.2f}")
