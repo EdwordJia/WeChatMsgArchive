@@ -10,6 +10,7 @@ CHANNEL_TO_PROJECT = {
     "54026338684@chatroom": "travel-sentiment-analysis",  # 3-person group
     "wxid_xi8r819u9oso22": "wordpress-decoration",  # 密码机
     "44601760933@chatroom": "xiaozhan-emoji-generator",  # 肖战表情包
+    "44637051187@chatroom": "distribution-management-system",  # Bingo - 录取信息管理系统
 }
 
 
@@ -28,7 +29,7 @@ def channel_to_project(channel_id):
 # Empty list = no restriction (any non-ME counts)
 CHANNEL_SENDER_WHITELIST = {
     # 4.21ai训练管理：客户/产品对接人发的才是真需求
-    "49734720477@chatroom": ["25984982369994080@openim"],  # 刘皓明（决策方），通过 BytesExtra 解析得到
+    "49734720477@chatroom": ["25984982369994080@openim", "25984122881289@openim", "25984983006338902@openim", "25984981887740865@openim", "25984984851522070@openim"],  # 5 个对接人 OpenIM wxid（discover_chatroom_senders.py 扫描得到）
     # private chats: only the contact themselves
     "wxid_tm60ob3bb94x22": ["wxid_tm60ob3bb94x22"],
     "wxid_5pppo6f5tpgz22": ["wxid_5pppo6f5tpgz22"],
