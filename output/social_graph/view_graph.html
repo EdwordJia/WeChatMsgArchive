@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>社交关系图谱可视化</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: 'Microsoft YaHei', Arial, sans-serif;
+            background: #f5f5f5;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+        }
+
+        .header h1 {
+            margin: 0 0 10px 0;
+            font-size: 28px;
+        }
+
+        .stats {
+            display: flex;
+            gap: 30px;
+            margin-top: 15px;
+        }
+
+        .stat-item {
+            background: rgba(255,255,255,0.2);
+            padding: 10px 20px;
+            border-radius: 5px;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            opacity: 0.9;
+        }
+
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            margin-top: 5px;
+        }
+
+        .content {
+            display: flex;
+        }
+
+        .graph-container {
+            flex: 1;
+            position: relative;
+            background: #fafafa;
+        }
+
+        #graph {
+            width: 100%;
+            height: 700px;
+        }
+
+        .sidebar {
+            width: 350px;
+            padding: 20px;
+            border-left: 1px solid #e0e0e0;
+            overflow-y: auto;
+            max-height: 700px;
+        }
+
+        .sidebar h3 {
+            margin-top: 0;
+            color: #667eea;
+            font-size: 18px;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+
+        .user-item {
+            padding: 12px;
+            margin: 8px 0;
+            background: #f8f9fa;
+            border-radius: 5px;
+            border-left: 3px solid #667eea;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .user-item:hover {
+            background: #e9ecef;
+            transform: translateX(5px);
+        }
+
+        .user-name {
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 5px;
+        }
+
+        .user-stats {
+            font-size: 12px;
+            color: #666;
+            display: flex;
+            gap: 15px;
+        }
+
+        .node {
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .node:hover {
+            stroke: #667eea;
+            stroke-width: 3px;
+        }
+
+        .link {
+            stroke: #999;
+            stroke-opacity: 0.3;
+        }
+
+        .node-label {
+            font-size: 11px;
+            pointer-events: none;
+            text-shadow: 0 1px 2px white, 1px 0 2px white, -1px 0 2px white, 0 -1px 2px white;
+        }
+
+        .tooltip {
+            position: absolute;
+            padding: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            border-radius: 5px;
+            pointer-events: none;
+            font-size: 12px;
+            display: none;
+            z-index: 1000;
+        }
+
+        .controls {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: white;
+            padding: 15px;
+            border-radius: 5px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .control-btn {
+            display: block;
+            width: 100%;
+            padding: 8px;
+            margin: 5px 0;
+            border: none;
+            background: #667eea;
+            color: white;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .control-btn:hover {
+            background: #5568d3;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🌐 社交关系图谱可视化</h1>
+            <div class="stats">
+                <div class="stat-item">
+                    <div class="stat-label">节点数</div>
+                    <div class="stat-value" id="nodeCount">-</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">连接数</div>
+                    <div class="stat-value" id="edgeCount">-</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">社区数</div>
+                    <div class="stat-value" id="communityCount">-</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="content">
+            <div class="graph-container">
+                <svg id="graph"></svg>
+                <div class="controls">
+                    <button class="control-btn" onclick="resetZoom()">重置视图</button>
+                    <button class="control-btn" onclick="toggleLabels()">显示/隐藏标签</button>
+                </div>
+                <div class="tooltip" id="tooltip"></div>
+            </div>
+
+            <div class="sidebar">
+                <h3>📊 核心人物 Top 20</h3>
+                <div id="topUsers"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let showLabels = true;
+        let simulation;
+        let svg, g;
+
+        // 加载数据
+        fetch('social_graph.json')
+            .then(response => response.json())
+            .then(data => {
+                initGraph(data);
+            })
+            .catch(error => {
+                console.error('加载数据失败:', error);
+                alert('无法加载图谱数据，请确保 social_graph.json 文件存在');
+            });
+
+        function initGraph(data) {
+            // 更新统计信息
+            document.getElementById('nodeCount').textContent = data.nodes.length;
+            document.getElementById('edgeCount').textContent = data.links.length;
+            document.getElementById('communityCount').textContent = new Set(data.nodes.map(n => n.community)).size;
+
+            // 设置SVG
+            svg = d3.select("#graph");
+            const width = svg.node().getBoundingClientRect().width;
+            const height = svg.node().getBoundingClientRect().height;
+
+            // 添加缩放功能
+            const zoom = d3.zoom()
+                .scaleExtent([0.1, 4])
+                .on("zoom", (event) => {
+                    g.attr("transform", event.transform);
+                });
+
+            svg.call(zoom);
+
+            g = svg.append("g");
+
+            // 创建力导向图
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", d3.forceLink(data.links).id(d => d.id).distance(100))
+                .force("charge", d3.forceManyBody().strength(-300))
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(30));
+
+            // 绘制连接线
+            const link = g.append("g")
+                .selectAll("line")
+                .data(data.links)
+                .join("line")
+                .attr("class", "link")
+                .attr("stroke-width", d => Math.sqrt(d.weight || 1));
+
+            // 绘制节点
+            const node = g.append("g")
+                .selectAll("circle")
+                .data(data.nodes)
+                .join("circle")
+                .attr("class", "node")
+                .attr("r", d => Math.max(5, Math.min(20, d.degree * 0.5)))
+                .attr("fill", d => d3.schemeCategory10[d.community % 10])
+                .call(drag(simulation))
+                .on("mouseover", showTooltip)
+                .on("mouseout", hideTooltip)
+                .on("click", highlightNode);
+
+            // 添加标签
+            const label = g.append("g")
+                .selectAll("text")
+                .data(data.nodes)
+                .join("text")
+                .attr("class", "node-label")
+                .text(d => d.display_name || d.id)
+                .attr("dx", 12)
+                .attr("dy", 4);
+
+            // 更新位置
+            simulation.on("tick", () => {
+                link
+                    .attr("x1", d => d.source.x)
+                    .attr("y1", d => d.source.y)
+                    .attr("x2", d => d.target.x)
+                    .attr("y2", d => d.target.y);
+
+                node
+                    .attr("cx", d => d.x)
+                    .attr("cy", d => d.y);
+
+                label
+                    .attr("x", d => d.x)
+                    .attr("y", d => d.y);
+            });
+
+            // 显示Top用户列表
+            displayTopUsers(data.nodes);
+
+            // 保存到全局
+            window.graphData = data;
+            window.nodeElements = node;
+            window.labelElements = label;
+        }
+
+        function displayTopUsers(nodes) {
+            const sorted = nodes.sort((a, b) => (b.pagerank || 0) - (a.pagerank || 0)).slice(0, 20);
+            const container = document.getElementById('topUsers');
+
+            container.innerHTML = sorted.map((user, index) => `
+                <div class="user-item" onclick="focusNode('${user.id}')">
+                    <div class="user-name">${index + 1}. ${user.display_name || user.id}</div>
+                    <div class="user-stats">
+                        <span>PageRank: ${(user.pagerank || 0).toFixed(4)}</span>
+                        <span>度数: ${user.degree || 0}</span>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function showTooltip(event, d) {
+            const tooltip = document.getElementById('tooltip');
+            tooltip.style.display = 'block';
+            tooltip.style.left = (event.pageX + 10) + 'px';
+            tooltip.style.top = (event.pageY - 10) + 'px';
+            tooltip.innerHTML = `
+                <strong>${d.display_name || d.id}</strong><br>
+                wxid: ${d.id}<br>
+                PageRank: ${(d.pagerank || 0).toFixed(4)}<br>
+                度数: ${d.degree || 0}<br>
+                社区: ${d.community}
+            `;
+        }
+
+        function hideTooltip() {
+            document.getElementById('tooltip').style.display = 'none';
+        }
+
+        function highlightNode(event, d) {
+            // 高亮选中节点及其邻居
+            const connectedNodes = new Set([d.id]);
+            window.graphData.links.forEach(link => {
+                if (link.source.id === d.id) connectedNodes.add(link.target.id);
+                if (link.target.id === d.id) connectedNodes.add(link.source.id);
+            });
+
+            window.nodeElements
+                .style("opacity", node => connectedNodes.has(node.id) ? 1 : 0.2)
+                .attr("stroke", node => node.id === d.id ? "#667eea" : null)
+                .attr("stroke-width", node => node.id === d.id ? 3 : 1);
+        }
+
+        function focusNode(nodeId) {
+            const node = window.graphData.nodes.find(n => n.id === nodeId);
+            if (node) {
+                const svg = d3.select("#graph");
+                const width = svg.node().getBoundingClientRect().width;
+                const height = svg.node().getBoundingClientRect().height;
+
+                const transform = d3.zoomIdentity
+                    .translate(width / 2, height / 2)
+                    .scale(1.5)
+                    .translate(-node.x, -node.y);
+
+                svg.transition().duration(750).call(
+                    d3.zoom().transform,
+                    transform
+                );
+
+                highlightNode(null, node);
+            }
+        }
+
+        function resetZoom() {
+            const svg = d3.select("#graph");
+            svg.transition().duration(750).call(
+                d3.zoom().transform,
+                d3.zoomIdentity
+            );
+
+            window.nodeElements
+                .style("opacity", 1)
+                .attr("stroke", null)
+                .attr("stroke-width", 1);
+        }
+
+        function toggleLabels() {
+            showLabels = !showLabels;
+            window.labelElements.style("display", showLabels ? "block" : "none");
+        }
+
+        function drag(simulation) {
+            function dragstarted(event) {
+                if (!event.active) simulation.alphaTarget(0.3).restart();
+                event.subject.fx = event.subject.x;
+                event.subject.fy = event.subject.y;
+            }
+
+            function dragged(event) {
+                event.subject.fx = event.x;
+                event.subject.fy = event.y;
+            }
+
+            function dragended(event) {
+                if (!event.active) simulation.alphaTarget(0);
+                event.subject.fx = null;
+                event.subject.fy = null;
+            }
+
+            return d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended);
+        }
+    </script>
+</body>
+</html>

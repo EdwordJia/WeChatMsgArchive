@@ -24,3 +24,6 @@ server
 *.spec
 test*
 wordcloud.html
+# auto-pipeline runtime state (machine-local, ephemeral)
+.claude/state/
+.archive/

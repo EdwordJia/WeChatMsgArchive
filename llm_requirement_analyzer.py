@@ -1,218 +1,282 @@
-"""
-LLM 语义分析需求识别器
+# -*- coding: utf-8 -*-
+"""LLM semantic requirement analyzer for WeChat messages and threads."""
 
-替代关键词规则，使用 Claude API 进行深度语义理解：
-1. 识别隐含需求和情绪
-2. 自动判定优先级
-3. 生成结构化任务描述
-4. 支持多轮对话澄清需求
-
-性能目标：
-- 识别准确率 > 85%
-- API 调用成本可控
-- 支持离线降级到规则模式
-"""
-
-import os
 import json
 import logging
-from typing import Dict, List, Optional, Tuple
-from datetime import datetime
+import os
+import re
+from typing import Dict, List, Optional
+
 from anthropic import Anthropic
 
 logger = logging.getLogger(__name__)
 
 
 class LLMRequirementAnalyzer:
-    """基于 LLM 的需求分析器"""
+    """Analyze chat messages or conversation threads into structured requirements."""
 
-    def __init__(self, api_key: Optional[str] = None):
-      """
-      初始化分析器
+    def __init__(self, api_key: Optional[str] = None, base_url: Optional[str] = None, model: Optional[str] = None):
+        self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN")
+        self.base_url = base_url or os.getenv("ANTHROPIC_BASE_URL")
+        self.model = model or os.getenv("ANTHROPIC_MODEL") or "claude-opus-4-20250514"
 
-    Args:
-            api_key: Anthropic API Key（默认从环境变量读取）
-        """
-        self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
         if not self.api_key:
-            logger.warning("未配置 ANTHROPIC_API_KEY，将使用规则模式")
+            logger.warning("未配置 ANTHROPIC_API_KEY 或 ANTHROPIC_AUTH_TOKEN，将使用规则模式")
             self.client = None
+        elif self.base_url:
+            logger.info("使用自定义 API 端点: %s, 模型: %s", self.base_url, self.model)
+            self.client = Anthropic(api_key=self.api_key, base_url=self.base_url)
         else:
-       self.client = Anthropic(api_key=self.api_key)
+            logger.info("使用默认 Anthropic API, 模型: %s", self.model)
+            self.client = Anthropic(api_key=self.api_key)
 
-        # 规则模式的关键词（作为降级方案）
-      self.bug_keywords = ["崩溃", "闪退", "报错", "失败", "不行", "无效", "异常", "bug"]
-        self.requirement_keywords = ["需要", "希望", "能不能", "建议", "增加", "优化", "改进"]
+        self.bug_keywords = ["崩溃", "闪退", "报错", "失败", "不行", "无效", "异常", "bug", "用不了", "服务器问题", "无法", "出错", "卡住", "死机", "没反应", "丢了", "丢失", "错乱", "重复", "缺失", "不对", "有问题"]
+        self.requirement_keywords = ["需要", "希望", "能不能", "建议", "增加", "优化", "改进", "可以吗", "能否", "支持", "新增", "调整", "修改", "改成", "改为", "替换", "应该", "麻烦", "还有", "对了"]
 
     def analyze_message(self, message: str, context: Optional[List[str]] = None) -> Dict:
-        """
-        分析消息，识别需求/Bug
-
-        Args:
-            message: 待分析的消息内容
-        context: 上下文消息列表（可选）
-
-        Returns:
-            {
-              "is_requirement": bool,
-            "type": "bug" | "feature" | "enhancement" | "question" | "other",
-             "priority": "critical" | "high" | "medium" | "low",
-                "title": str,
-                "description": str,
-                "tags": List[str],
-             "confidence": float,  # 0-1
-                "reasoning": str  # 分析理由
-            }
-        """
         if self.client:
             return self._analyze_with_llm(message, context)
+        return self._analyze_with_rules(message)
+
+    def analyze_thread(self, thread: Dict) -> Dict:
+        content = thread.get("content") or ""
+        if self.client:
+            result = self._analyze_with_llm(content, None, is_thread=True)
         else:
-          return self._analyze_with_rules(message)
+            result = self._analyze_with_rules(content)
+        result["source_thread"] = thread
+        result["source_message"] = thread.get("source_message") or thread
+        result["message_count"] = thread.get("message_count", 1)
+        return result
 
-    def _analyze_with_llm(self, message: str, context: Optional[List[str]] = None) -> Dict:
-        """使用 Claude API 进行语义分析"""
+    def _analyze_with_llm(self, message: str, context: Optional[List[str]] = None, is_thread: bool = False) -> Dict:
+        unit_name = "对话线程" if is_thread else "聊天消息"
+        system_prompt = """你是一个专业的软件项目需求分析师，负责从客户聊天中识别可执行的软件需求、Bug反馈和交付反馈。
 
-        # 构建 Prompt
-        system_prompt = """你是一个专业的需求分析师，负责从用户的聊天消息中识别软件需求和Bug。
+分析原则：
+1. 优先理解上下文，不要把连续补充说明拆成多个重复需求。
+2. 区分客户真实诉求、我方回复、闲聊、确认收货、催促和技术讨论。
+3. 只在需要创建或更新开发任务时输出 is_requirement=true。
+4. 如果是同一事项的多个细节，合并成一个任务描述。
+5. 保留证据：描述中要包含客户表达、背景、验收标准。
+6. 图片、XML、文件、语音、撤回、[无文本内容]只能作为证据，不能作为标题或需求正文。如果消息包含附件描述（如[图片]、[语音] 5.4秒、[文件] 文件名等），请将这些描述作为分析需求的上下文证据，不要忽略。
+7. 标题必须是可执行事项，不要包含时间戳、发送人、XML片段或“无文本”。
 
-分析维度：
-1. **是否为需求/Bug**: 判断消息是否包含软件开发相关的需求、Bug报告或改进建议
-2. **类型分类**:
-   - bug: 软件缺陷、错误、异常
-   - feature: 新功能需求
-   - enhancement: 现有功能改进
-   - question: 咨询问题
-   - other: 其他
+类型分类：
+- bug: 软件缺陷、错误、异常、不可用
+- feature: 新功能需求
+- enhancement: 现有功能改进
+- feedback: 对已交付结果的反馈或验收意见
+- urgency_signal: 催促、紧急排期、上线压力
+- question: 咨询问题
+- other: 无需开发动作
 
-3. **优先级判定**:
-   - critical: 严重影响使用，需立即处理
-   - high: 重要但不紧急
-   - medium: 一般优先级
-   - low: 可延后处理
+优先级：
+- critical: 影响上线/生产/客户验收，需立即处理
+- high: 重要需求或明确客户反馈
+- medium: 普通改进
+- low: 可延后或信息不足
 
-4. **生成任务描述**: 提取关键信息，生成结构化的任务标题和描述
+输出格式要求（严格遵守）：
+- 不要输出任何 JSON 之外的内容，不要输出 markdown 表格、列表、分析说明等额外内容。
+- 直接输出纯 JSON 对象，不要用 ```json 代码块包裹。
+- 确保 JSON 格式合法，可以被标准 JSON 解析器直接解析。
 
-输出格式（JSON）：
-{
-  "is_requirement": true/false,
-  "type": "bug|feature|enhancement|question|other",
-  "priority": "critical|high|medium|low",
-  "title": "简洁的任务标题（<50字）",
-  "description": "详细描述，包括背景、需求、验收标准",
-  "tags": ["标签1", "标签2"],
-  "confidence": 0.0-1.0,
-  "reasoning": "分析理由"
-}"""
+输出示例：
+{"is_requirement": true, "type": "feature", "priority": "high", "title": "首页添加搜索功能", "description": "客户希望在首页增加搜索框...", "tags": ["feature"], "confidence": 0.85, "reasoning": "客户明确表达了搜索需求"}"""
 
-        user_prompt = f"请分析以下消息：\n\n{message}"
-
+        user_prompt = f"请分析以下{unit_name}：\n\n{message}"
         if context:
-            user_prompt += f"\n\n上下文消息：\n" + "\n".join(f"- {msg}" for msg in context[-3:])
+            user_prompt += "\n\n上下文消息：\n" + "\n".join(f"- {msg}" for msg in context[-3:])
 
         try:
             response = self.client.messages.create(
-                model="claude-opus-4-20250514",
-                max_tokens=1024,
+                model=self.model,
+                max_tokens=1200,
                 system=system_prompt,
-                messages=[{"role": "user", "content": user_prompt}]
-       )
-
-            # 解析 JSON 响应
-            content = response.content[0].text
-            result = json.loads(content)
-
-            logger.info(f"✓ LLM 分析完成: {result['type']} | {result['priority']} | 置信度 {result['confidence']:.2f}")
+                messages=[{"role": "user", "content": user_prompt}],
+            )
+            content = self._extract_text(response)
+            if not content:
+                logger.error("无法从响应中提取文本内容")
+                return self._analyze_with_rules(message)
+            result = self._extract_json(content)
+            if result is None:
+                logger.error("LLM 响应中未找到有效 JSON")
+                return self._analyze_with_rules(message)
+            logger.info("✓ LLM 分析完成: %s | %s | 置信度 %.2f", result.get("type"), result.get("priority"), result.get("confidence", 0))
             return result
+        except Exception as exc:
+            logger.error("LLM API 调用失败: %s", exc)
+            return self._analyze_with_rules(message)
 
-        except json.JSONDecodeError as e:
-        logger.error(f"LLM 响应解析失败: {e}")
-            return self._analyze_with_rules(message)
-        except Exception as e:
-            logger.error(f"LLM API 调用失败: {e}")
-            return self._analyze_with_rules(message)
+    def _extract_json(self, text: str) -> Optional[Dict]:
+        """从 LLM 响应文本中提取 JSON，支持 ```json 代码块或直接 JSON。"""
+        if not text:
+            return None
+        # 尝试直接解析
+        text = text.strip()
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+        # 尝试提取 ```json ... ``` 代码块
+        import re
+        m = re.search(r"```json\s*(.*?)\s*```", text, re.DOTALL)
+        if m:
+            try:
+                return json.loads(m.group(1))
+            except json.JSONDecodeError:
+                pass
+        # 尝试提取第一个 { ... } 块
+        m = re.search(r"(\{.*\})", text, re.DOTALL)
+        if m:
+            try:
+                return json.loads(m.group(1))
+            except json.JSONDecodeError:
+                pass
+        return None
+
+    def _extract_text(self, response) -> Optional[str]:
+        for block in response.content:
+            if hasattr(block, "text"):
+                return block.text
+            if getattr(block, "type", None) == "text":
+                return block.text
+        return None
+
+    def _meaningful_lines(self, message: str) -> List[str]:
+        lines = []
+        for raw in (message or "").splitlines():
+            line = raw.strip()
+            if not line or "[无文本内容]" in line:
+                continue
+            lower = line.lower()
+            if lower.startswith("<?xml") or lower.startswith("<msg"):
+                continue
+            if any(token in lower for token in ("<img ", "<voicemsg", "<appmsg", "cdnthumburl=", "aeskey=")):
+                continue
+            # 保留附件描述行
+            cleaned = re.sub(r"^[-*]\s+", "", line).strip()
+            if cleaned.startswith(("[图片]", "[语音]", "[视频]", "[文件]", "[链接]", "[小程序]", "[合并转发聊天记录]", "[表情包]", "[系统消息]")):
+                lines.append(cleaned)
+                continue
+            if any(marker in line for marker in ("图片/xml证据", "无文本/附件消息", "撤回消息证据", "[附件/多模态证据]")):
+                continue
+            line = re.sub(r"^\[[^\]]+\]\s*[^:：]{1,40}[:：]\s*", "", line).strip()
+            line = re.sub(r"^#+\s*", "", line).strip()
+            line = re.sub(r"^[-*]\s+", "", line).strip()
+            line = re.sub(r"@\S+\s*", "", line).strip()
+            if line in ("背景", "背景/问题", "客户原话", "客户原话/上下文", "验收标准", "原始证据摘要", "来源"):
+                continue
+            if line and len(line) >= 2:
+                lines.append(line)
+        return lines
+
+    def _make_rule_title(self, lines: List[str], prefix: str = "") -> str:
+        for line in lines:
+            # 去掉附件描述前缀（如 [语音] 8.3秒 转文字: ...）
+            cleaned = re.sub(r"^\[(图片|语音|视频|文件|链接|小程序|合并转发聊天记录|表情包|系统消息)\][^:：]*[：:]\s*", "", line).strip()
+            # 去掉前缀后如果只剩文件路径，跳过
+            cleaned = cleaned.rstrip("]")
+            if re.search(r'[\\/][^\\/]+\.(png|jpg|jpeg|gif|webp|psd|pdf|doc|docx|xls|xlsx)$', cleaned, re.IGNORECASE):
+                continue
+            cleaned = re.sub(r"[。！？!?].*$", "", cleaned).strip(" ，,。]")
+            cleaned = re.sub(r"^(这里|这个|那边|咱们|同时|就是)", "", cleaned).strip(" ，,。]") or cleaned
+            if len(cleaned) > 48:
+                cleaned = cleaned[:48].rstrip("，,。]")
+            if cleaned:
+                if prefix and not cleaned.startswith(prefix):
+                    return prefix + cleaned
+                return cleaned
+        return ""
+
+    def _rule_description(self, lines: List[str]) -> str:
+        original = "\n".join(f"- {line}" for line in lines[:8])
+        return "## 背景/客户原话\n" + original + "\n\n## 验收标准\n- 按客户反馈完成对应功能或缺陷修复\n- 相关页面/流程与客户描述一致"
 
     def _analyze_with_rules(self, message: str) -> Dict:
-        """规则模式（降级方案）"""
         logger.info("使用规则模式分析")
-
-        is_bug = any(kw in message for kw in self.bug_keywords)
-        is_requirement = any(kw in message for kw in self.requirement_keywords)
-
-        if is_bug:
-            return {
-                "is_requirement": True,
-            "type": "bug",
-              "priority": "high",
-            "title": f"Bug: {message[:30]}...",
-                "description": message,
-           "tags": ["bug"],
-             "confidence": 0.6,
-                "reasoning": "基于关键词规则匹配"
-       }
-        elif is_requirement:
-            return {
-                "is_requirement": True,
-         "type": "feature",
-                "priority": "medium",
-        "title": f"需求: {message[:30]}...",
-             "description": message,
-           "tags": ["feature"],
-         "confidence": 0.5,
-                "reasoning": "基于关键词规则匹配"
-            }
-        else:
+        lines = self._meaningful_lines(message)
+        if not lines:
             return {
                 "is_requirement": False,
                 "type": "other",
                 "priority": "low",
-         "title": "",
-                "description": ",
+                "title": "",
+                "description": "",
                 "tags": [],
-                "confidence": 0.3,
-                "reasoning": "未匹配到需求关键词"
+                "confidence": 0.2,
+                "reasoning": "没有有效文本需求，只有附件或无文本消息",
             }
+        text = "\n".join(lines)
+        is_bug = any(kw in text for kw in self.bug_keywords)
+        is_requirement = any(kw in text for kw in self.requirement_keywords)
+
+        if is_bug:
+            title = self._make_rule_title(lines, "修复")
+            return {
+                "is_requirement": bool(title),
+                "type": "bug",
+                "priority": "high",
+                "title": title,
+                "description": self._rule_description(lines),
+                "tags": ["bug"],
+                "confidence": 0.65,
+                "reasoning": "基于有效文本关键词规则匹配",
+            }
+        if is_requirement:
+            title = self._make_rule_title(lines)
+            return {
+                "is_requirement": bool(title),
+                "type": "feature",
+                "priority": "medium",
+                "title": title,
+                "description": self._rule_description(lines),
+                "tags": ["feature"],
+                "confidence": 0.6,
+                "reasoning": "基于有效文本关键词规则匹配",
+            }
+        return {
+            "is_requirement": False,
+            "type": "other",
+            "priority": "low",
+            "title": "",
+            "description": "",
+            "tags": [],
+            "confidence": 0.3,
+            "reasoning": "未匹配到需求关键词",
+        }
 
     def batch_analyze(self, messages: List[Dict[str, str]], threshold: float = 0.7) -> List[Dict]:
-      """
-        批量分析消息
-
-        Args:
-          messages: 消息列表 [{"content": "...", "sender": "...", "time": "..."}]
-            threshold: 置信度阈值，低于此值的结果将被过滤
-        Returns:
-            识别出的需求列表
-        """
         results = []
-
         for i, msg in enumerate(messages):
-            # 提取上下文（前3条消息）
-            context = [m["content"] for m in messages[max(0, i-3):i]]
+            context = [m.get("content", "") for m in messages[max(0, i - 3):i]]
+            result = self.analyze_message(msg.get("content", ""), context)
+            if result.get("is_requirement") and result.get("confidence", 0) >= threshold:
+                result["source_message"] = msg
+                results.append(result)
+        logger.info("✓ 批量分析完成: %d 条消息 → %d 个需求", len(messages), len(results))
+        return results
 
-            result = self.analyze_message(msg["content"], context)
-
-            # 过滤低置信度结果
-          if result["is_requirement"] and result["confidence"] >= threshold:
-         result["source_message"] = msg
-            results.append(result)
-
-        logger.info(f"✓ 批量分析完成: {len(messages)} 条消息 → {len(results)} 个需求")
+    def batch_analyze_threads(self, threads: List[Dict], threshold: float = 0.7) -> List[Dict]:
+        results = []
+        for thread in threads:
+            result = self.analyze_thread(thread)
+            if result.get("is_requirement") and result.get("confidence", 0) >= threshold:
+                results.append(result)
+        logger.info("✓ 线程分析完成: %d 个线程 → %d 个需求", len(threads), len(results))
         return results
 
 
-# 使用示例
 if __name__ == "__main__":
+    import sys
+    sys.stdout.reconfigure(encoding="utf-8")
+
     analyzer = LLMRequirementAnalyzer()
-
-    # 单条消息分析
-    message = "播放器经常崩溃，点击下一首就闪退，能不能修复一下？"
-    result = analyzer.analyze_message(message)
-    print(json.dumps(result, ensure_ascii=False, indent=2))
-
-    # 批量分析
-    messages = [
-        {"content": "这个功能不错，但是能不能增加歌词显示？", "sender": "用户A", "time": "2026-05-12 10:00"},
-        {"content": "好的，我记录下来", "sender": "我", "time": "2026-05-12 10:01"},
-        {"content": "还有，播放列表能不能支持拖拽排序？", "sender": "用户A", "time": "2026-05-12 10:02"},
-    ]
-    results = analyzer.batch_analyze(messages, threshold=0.6)
-    print(f"\n识别到 {len(results)} 个需求")
+    sample_thread = {
+        "content": "[2026-05-29 09:00:00] 客户: 这个页面颜色不对\n[2026-05-29 09:02:00] 我: 好的我看下\n[2026-05-29 09:04:00] 客户: Logo也换掉",
+        "message_count": 3,
+        "source_message": {"sender": "客户", "time": "2026-05-29 09:04:00"},
+    }
+    print(json.dumps(analyzer.analyze_thread(sample_thread), ensure_ascii=False, indent=2))

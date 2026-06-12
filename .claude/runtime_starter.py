@@ -1,0 +1,112 @@
+# -*- coding: utf-8 -*-
+"""Stage 5: queue runtime executions for newly-created kanban tasks.
+
+DEPRECATED: safe_tags / approval_tags / decide_approval 已迁移到 pipeline.yaml + config_loader.py
+此文件保留 queue_runtime / list_pending / mark_started 等队列操作功能。
+"""
+
+import json
+from pathlib import Path
+from datetime import datetime
+
+try:
+    from config_loader import get_runtime_config, decide_approval
+except ImportError:
+    decide_approval = lambda tags: True
+
+QUEUE_FILE = Path(".claude/state/runtime_queue.json")
+
+
+def _load():
+    if not QUEUE_FILE.exists():
+        return {"pending": [], "history": []}
+    try:
+        return json.loads(QUEUE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {"pending": [], "history": []}
+
+
+def _save(state):
+    QUEUE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    QUEUE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+
+
+# Tags that DO NOT require approval (safe analysis-only)
+SAFE_TAGS = {"analysis", "ocr", "knowledge-base", "form", "review-panel", "ux", "self-test"}
+# Tags that ALWAYS require approval (code/infra changes)
+REQUIRE_APPROVAL_TAGS = {"infra", "reliability", "deploy", "template", "seal", "naming", "rpa", "scale", "performance"}
+
+
+def decide_approval(tags):
+    """Auto-decide require_approval based on tags."""
+    tags = set(tags or [])
+    if tags & REQUIRE_APPROVAL_TAGS:
+        return True
+    if tags <= SAFE_TAGS:
+        return False
+    return True  # default: safer
+
+def queue_runtime(task_id, project, title, agent="codex", require_approval=True, run_reason="auto-pipeline"):
+    """Queue a runtime execution for downstream MCP invocation."""
+    state = _load()
+    for entry in state.setdefault("pending", []):
+        if entry.get("task_id") == task_id:
+            entry.update({
+                "project": project,
+                "title": title,
+                "agent": agent,
+                "require_approval": require_approval,
+                "run_reason": run_reason,
+                "status": "queued",
+                "updated_at": datetime.now().isoformat(),
+            })
+            _save(state)
+            return entry
+    entry = {
+        "task_id": task_id,
+        "project": project,
+        "title": title,
+        "agent": agent,
+        "require_approval": require_approval,
+        "run_reason": run_reason,
+        "queued_at": datetime.now().isoformat(),
+        "status": "queued",
+    }
+    state.setdefault("pending", []).append(entry)
+    _save(state)
+    return entry
+
+
+def list_pending():
+    return _load().get("pending", [])
+
+
+def mark_started(task_id, process_id=None):
+    state = _load()
+    pending = state.get("pending", [])
+    remaining = []
+    for e in pending:
+        if e.get("task_id") == task_id:
+            e["status"] = "started"
+            e["started_at"] = datetime.now().isoformat()
+            if process_id:
+                e["process_id"] = process_id
+            state.setdefault("history", []).append(e)
+        else:
+            remaining.append(e)
+    state["pending"] = remaining
+    _save(state)
+
+
+def stats():
+    state = _load()
+    return {"pending": len(state.get("pending", [])), "history": len(state.get("history", []))}
+
+
+if __name__ == "__main__":
+    import sys
+    sys.stdout.reconfigure(encoding="utf-8")
+    print("runtime queue stats:", stats())
+    print("pending:", list_pending())
