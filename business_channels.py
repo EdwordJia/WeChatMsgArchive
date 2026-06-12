@@ -1,50 +1,37 @@
 # -*- coding: utf-8 -*-
-"""Business chatroom whitelist + project mapping."""
+"""Business chatroom whitelist + project mapping.
 
-# id (wxid_xxx for private, xxx@chatroom for group) -> kanban project name
-CHANNEL_TO_PROJECT = {
-    "49734720477@chatroom": "ai-zs",          # 4.21ai训练管理 (legal doc generator)
-    "wxid_tm60ob3bb94x22": "ai-zs",           # 编程仝芷硕(报价合适) (ai-zs customer contact)
-    "wxid_5pppo6f5tpgz22": "travel-sentiment-analysis",  # 风临野
-    "wxid_7070920730612": "MCE",              # 烨林 (MCE crawler)
-    "54026338684@chatroom": "travel-sentiment-analysis",  # 3-person group
-    "wxid_xi8r819u9oso22": "wordpress-decoration",  # 密码机
-    "44601760933@chatroom": "xiaozhan-emoji-generator",  # 肖战表情包
-    "44637051187@chatroom": "distribution-management-system",  # Bingo - 录取信息管理系统
-}
+DEPRECATED: 所有配置已迁移到 pipeline.yaml + config_loader.py
+此文件保留仅为向后兼容，所有函数委托给 config_loader。
+"""
+
+from config_loader import (
+    get_business_channels,
+    channel_to_project,
+    is_sender_allowed,
+)
 
 
-def get_business_channels():
-    """Return list of all business channel ids (groups + privates)."""
-    return list(CHANNEL_TO_PROJECT.keys())
+# 旧代码可能直接 import 这些常量，保留为属性代理
+def _proxy_channel_to_project():
+    """Build CHANNEL_TO_PROJECT dict from config_loader for compatibility."""
+    from config_loader import _build_channel_map
+    cmap = _build_channel_map()
+    return {cid: entry["project"] for cid, entry in cmap.items()}
 
 
-def channel_to_project(channel_id):
-    """Return kanban project name for a chatroom/wxid, or None if unknown."""
-    return CHANNEL_TO_PROJECT.get(channel_id)
+def _proxy_sender_whitelist():
+    """Build CHANNEL_SENDER_WHITELIST dict from config_loader for compatibility."""
+    from config_loader import _build_channel_map
+    cmap = _build_channel_map()
+    result = {}
+    for cid, entry in cmap.items():
+        wl = entry.get("sender_whitelist", [])
+        if wl:
+            result[cid] = wl
+    return result
 
 
-
-# Per-channel sender whitelist (only these wxids' messages count as requirements)
-# Empty list = no restriction (any non-ME counts)
-CHANNEL_SENDER_WHITELIST = {
-    # 4.21ai训练管理：客户/产品对接人发的才是真需求
-    "49734720477@chatroom": ["25984982369994080@openim", "25984122881289@openim", "25984983006338902@openim", "25984981887740865@openim", "25984984851522070@openim"],  # 5 个对接人 OpenIM wxid（discover_chatroom_senders.py 扫描得到）
-    # private chats: only the contact themselves
-    "wxid_tm60ob3bb94x22": ["wxid_tm60ob3bb94x22"],
-    "wxid_5pppo6f5tpgz22": ["wxid_5pppo6f5tpgz22"],
-    "wxid_7070920730612": ["wxid_7070920730612"],
-    "wxid_xi8r819u9oso22": ["wxid_xi8r819u9oso22"],
-}
-
-
-def is_sender_allowed(channel_id, sender_wxid):
-    """Check if a sender's message in a channel should be considered.
-
-    Returns True if sender is whitelisted or no whitelist defined."""
-    wl = CHANNEL_SENDER_WHITELIST.get(channel_id)
-    if wl is None:
-        return True  # channel not configured: allow
-    if not wl:
-        return True  # empty list: no per-sender filter
-    return sender_wxid in wl
+# Lazy proxies — evaluated on first access
+CHANNEL_TO_PROJECT = _proxy_channel_to_project()
+CHANNEL_SENDER_WHITELIST = _proxy_sender_whitelist()

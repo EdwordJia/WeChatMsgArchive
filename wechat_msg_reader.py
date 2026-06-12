@@ -23,11 +23,20 @@ def load_nick_cache(p):
 def query_one_db(p, cutoff, flt, nicks):
     out = []
     try:
+        try:
+            import sys as _sys
+            _claude_dir = str(Path(__file__).parent / ".claude")
+            if _claude_dir not in _sys.path:
+                _sys.path.insert(0, _claude_dir)
+            from wechat_attachment_parser import parse_attachments
+        except Exception:
+            parse_attachments = None
+        db_dir = str(p.parent.parent)
         cur = sqlite3.connect(str(p)).cursor()
         cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='MSG'")
         if not cur.fetchone():
             return out
-        sql = "SELECT CreateTime, StrContent, StrTalker, Type, IsSender, BytesExtra FROM MSG WHERE CreateTime > ? AND StrTalker LIKE '%@chatroom' ORDER BY CreateTime DESC LIMIT 500"
+        sql = "SELECT CreateTime, StrContent, StrTalker, Type, IsSender, BytesExtra FROM MSG WHERE CreateTime > ? ORDER BY CreateTime DESC LIMIT 500"
         cur.execute(sql, (cutoff,))
         for ct, raw, tk, mt, snd, bx in cur.fetchall():
             if flt and tk not in flt:
@@ -54,6 +63,7 @@ def query_one_db(p, cutoff, flt, nicks):
                 sname = nicks.get(wxid, wxid)
             else:
                 sname = "GROUP"
+            attachments = parse_attachments(mt, body, tk, db_dir) if parse_attachments else []
             out.append({
                 "content": body,
                 "sender": sname,
@@ -64,6 +74,7 @@ def query_one_db(p, cutoff, flt, nicks):
                 "chatroom_name": nicks.get(tk, tk),
                 "type": mt,
                 "is_sender": snd,
+                "attachments": attachments,
             })
     except Exception as e:
         print("query", p.name, "fail:", e)
@@ -75,10 +86,8 @@ def fetch_recent_messages(hours=24, chatroom_filter=None, db_dir="output/decrypt
     cutoff = int((datetime.now() - timedelta(hours=hours)).timestamp())
     nicks = load_nick_cache(base / "MicroMsg.db")
     collected = []
-    for n in ("MSG0.db", "MSG1.db"):
-        p = base / "Multi" / n
-        if p.exists():
-            collected.extend(query_one_db(p, cutoff, chatroom_filter, nicks))
+    for p in sorted((base / "Multi").glob("MSG*.db")):
+        collected.extend(query_one_db(p, cutoff, chatroom_filter, nicks))
     seen = set()
     dedup = []
     for m in collected:

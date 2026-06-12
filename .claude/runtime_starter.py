@@ -1,13 +1,18 @@
 # -*- coding: utf-8 -*-
 """Stage 5: queue runtime executions for newly-created kanban tasks.
 
-Mode: writes a JSON queue file that a downstream Claude session reads and
-invokes mcp__kanban-doc__start_runtime against. Default require_approval=true so
-agent only runs after human approval (enterprise safety)."""
+DEPRECATED: safe_tags / approval_tags / decide_approval 已迁移到 pipeline.yaml + config_loader.py
+此文件保留 queue_runtime / list_pending / mark_started 等队列操作功能。
+"""
 
 import json
 from pathlib import Path
 from datetime import datetime
+
+try:
+    from config_loader import get_runtime_config, decide_approval
+except ImportError:
+    decide_approval = lambda tags: True
 
 QUEUE_FILE = Path(".claude/state/runtime_queue.json")
 
@@ -46,6 +51,19 @@ def decide_approval(tags):
 def queue_runtime(task_id, project, title, agent="codex", require_approval=True, run_reason="auto-pipeline"):
     """Queue a runtime execution for downstream MCP invocation."""
     state = _load()
+    for entry in state.setdefault("pending", []):
+        if entry.get("task_id") == task_id:
+            entry.update({
+                "project": project,
+                "title": title,
+                "agent": agent,
+                "require_approval": require_approval,
+                "run_reason": run_reason,
+                "status": "queued",
+                "updated_at": datetime.now().isoformat(),
+            })
+            _save(state)
+            return entry
     entry = {
         "task_id": task_id,
         "project": project,

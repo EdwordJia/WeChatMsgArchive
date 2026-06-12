@@ -7,7 +7,13 @@ import secrets
 from datetime import datetime, timezone
 from pathlib import Path
 
-KANBAN_ROOT = Path(r"D:/develoment_home/project_home/videKanban/kanban-doc/.kanban")
+try:
+    from config_loader import get_kanban_config
+    _kanban_root = Path(get_kanban_config().get("root", "D:/develoment_home/project_home/videKanban/kanban-doc/.kanban"))
+except Exception:
+    _kanban_root = Path(r"D:/develoment_home/project_home/videKanban/kanban-doc/.kanban")
+
+KANBAN_ROOT = _kanban_root
 
 
 def _slugify(title, max_len=60):
