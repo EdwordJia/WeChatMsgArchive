@@ -10,7 +10,7 @@ from .database import WeChatDatabase
 class WeChatTools:
     """微信数据 MCP 工具集"""
 
-  def __init__(self, db_path: str = None):
+    def __init__(self, db_path: str = None):
         self.db = WeChatDatabase(db_path)
 
     def search_messages(self, arguments: Dict[str, Any]) -> Dict[str, Any]:

@@ -13,36 +13,16 @@
 **关键**：必须先同步数据库到最新，否则找不到新群/新消息！
 
 ```bash
-# 方法1：使用 heredoc 方式（最可靠）
 cd "D:\develoment_home\project_home\WeChatMsgArchive"
-./venv/Scripts/python << 'ENDPYTHON'
-import os, sys
-sys.path.insert(0, os.getcwd())
-from wxManager.decrypt.wx_info_v3 import get_info_wxid, get_wx_dir, get_key, get_exe_bit
-from wxManager.decrypt.decrypt_v3 import decrypt_db_file_v3
-import psutil, ctypes
-
-for proc in psutil.process_iter(['name', 'exe', 'pid']):
-    if proc.name() == 'WeChat.exe':
-        Handle = ctypes.windll.kernel32.OpenProcess(0x1F0FFF, False, proc.pid)
-        wxid = get_info_wxid(Handle)
-        wx_dir = get_wx_dir(wxid)
-        key = get_key(wx_dir, get_exe_bit(proc.exe()) // 8)
-
-        # 解密 MSG1.db（最新消息）
-        src = os.path.join(wx_dir, 'Msg', 'Multi', 'MSG1.db')
-      dest = 'output/decrypted_db/Multi/MSG1.db'
-        if os.path.exists(dest):
-          os.remove(dest)
-        decrypt_db_file_v3(key, src, dest)
-      print(f"Done! Size: {os.path.getsize(dest)} bytes")
-        break
-ENDPYTHON
+./venv/Scripts/python wechat_sync_facade.py
 ```
 
-**验证**：检查最新消息时间是否是今天
+- 自动检测 `WeChat.exe` / `Weixin.exe` 并走对应 v3/v4 链路
+- 同步结果统一汇总到索引库 `output/wechat_index.db`
+
+**验证**：检查索引库最新消息时间是否是今天
 ```bash
-sqlite3 output/decrypted_db/Multi/MSG1.db "SELECT datetime(MAX(CreateTime), 'unixepoch', 'localtime') FROM MSG;"
+sqlite3 output/wechat_index.db "SELECT datetime(MAX(create_time), 'unixepoch', 'localtime') FROM messages;"
 ```
 
 ### Step 2: 搜索目标群聊
@@ -83,28 +63,28 @@ for member_wxid in member_wxids:
     cur.execute('''
         SELECT ChatRoomName
         FROM ChatRoom
-      WHERE UserNameList LIKE ?
+        WHERE UserNameList LIKE ?
     ''', (f'%{member_wxid}%',))
 
     for (chatroom_id,) in cur.fetchall():
         # 获取群名
         cur.execute('SELECT NickName FROM Contact WHERE UserName = ?', (chatroom_id,))
         row = cur.fetchone()
-        print(f'{row[0] if row else \"(未知)\"} | {chatroom_id}')
+        print(f'{row[0] if row else "(未知)"} | {chatroom_id}')
 ```
 
 ## 方法C：通过消息内容搜索
 ```python
 # 搜索包含关键词的群聊
-conn_msg = sqlite3.connect('output/decrypted_db/Multi/MSG1.db')
+conn_msg = sqlite3.connect('output/wechat_index.db')
 cur_msg = conn_msg.cursor()
 cur_msg.execute('''
-    SELECT DISTINCT StrTalker, COUNT(*) as msg_count
-    FROM MSG
-    WHERE StrTalker LIKE '%@chatroom'
-    AND StrContent LIKE ?
-    AND CreateTime > ?
-    GROUP BY StrTalker
+    SELECT DISTINCT talker, COUNT(*) as msg_count
+    FROM messages
+    WHERE talker LIKE '%@chatroom'
+    AND content LIKE ?
+    AND create_time > ?
+    GROUP BY talker
     ORDER BY msg_count DESC
 ''', (f'%{关键词}%', int((datetime.now() - timedelta(days=7)).timestamp())))
 ```
@@ -115,37 +95,53 @@ cur_msg.execute('''
 today = int((datetime.now() - timedelta(hours=24)).timestamp())
 
 cur_msg.execute('''
-    SELECT DISTINCT StrTalker, MAX(CreateTime), COUNT(*)
-    FROM MSG
-    WHERE StrTalker LIKE '%@chatroom'
-    AND CreateTime > ?
-    GROUP BY StrTalker
-    ORDER BY MAX(CreateTime) DESC
+    SELECT DISTINCT talker, MAX(create_time), COUNT(*)
+    FROM messages
+    WHERE talker LIKE '%@chatroom'
+    AND create_time > ?
+    GROUP BY talker
+    ORDER BY MAX(create_time) DESC
     LIMIT 30
 ''', (today,))
 ```
 
 ### Step 3: 查看群聊消息
 
-找到目标群后，查看消息内容确认：
+找到目标群后，优先从索引库查看消息内容确认：
 
 ```python
-chatroom_id = '目标群ID'
+import sqlite3
+from datetime import datetime
 
-cur_msg.execute('''
-    SELECT CreateTime, StrContent, Type, IsSender
-    FROM MSG
-  WHERE StrTalker = ? AND Type = 1
-    ORDER BY CreateTime ASC
+chatroom_id = '目标群ID'
+conn = sqlite3.connect('output/wechat_index.db')
+cur = conn.cursor()
+
+cur.execute('''
+    SELECT create_time, content, msg_type, is_sender, sender_wxid
+    FROM messages
+    WHERE talker = ? AND msg_type = 1
+    ORDER BY create_time ASC
     LIMIT 50
 ''', (chatroom_id,))
 
-for create_time, content, msg_type, is_sender in cur_msg.fetchall():
+for create_time, content, msg_type, is_sender, sender_wxid in cur.fetchall():
     time_str = datetime.fromtimestamp(create_time).strftime('%m-%d %H:%M')
-    sender = '我' if is_sender else '对方'
+    sender = '我' if is_sender else sender_wxid
     if content and len(content) < 300:
         print(f'[{time_str}] {sender}: {content}')
 ```
+
+> 备选方式（直接查解密 DB）：如果索引库未覆盖或需要原始字段，可解密后查 `output/decrypted_db/Multi/MSG*.db`：
+> ```python
+> cur_msg.execute('''
+>     SELECT CreateTime, StrContent, Type, IsSender
+>     FROM MSG
+>     WHERE StrTalker = ? AND Type = 1
+>     ORDER BY CreateTime ASC
+>     LIMIT 50
+> ''', (chatroom_id,))
+> ```
 
 ### Step 4: 提取需求信息
 
@@ -166,7 +162,7 @@ mcp__kanban-doc__bootstrap_project(
     auto_start=True,  # 自动认领初始任务
     initial_task={
         "title": "设计并实现XXX核心功能",
-        "body": ""
+        "body": """
 ## 项目背景
 [从聊天记录提取的背景]
 
@@ -229,13 +225,17 @@ cd ./项目名称
 
 ## 常见问题
 
-### Q1: 数据库解密失败（文件大小为0）
-**原因**: 使用了 `-c` 参数的 Python 命令，缩进错误导致解密失败
-**解决**: 使用 heredoc 方式（`<< 'ENDPYTHON'`），避免缩进问题
+### Q1: 同步失败或密钥获取失败
+**原因**: 微信未运行、未以管理员权限运行，或 v3 内存密钥读取失败
+**解决**:
+- 确认微信已登录并保持运行
+- 以管理员权限运行 PowerShell/终端
+- 重启微信后重试
+- 查看 `wechat_sync_facade.py` 输出中的具体报错步骤
 
 ### Q2: 找不到新群/新消息
 **原因**: 数据库未同步到最新
-**解决**: 先执行 Step 1 同步数据库，验证最新消息时间
+**解决**: 先执行 Step 1 同步数据库，验证索引库最新消息时间
 
 ### Q3: 群名为空
 **原因**: 新群可能还没设置群名，或索引未同步
@@ -250,18 +250,12 @@ cd ./项目名称
 - 查看消息内容确认
 - 询问用户提供更多信息（成员名、关键词）
 
-### Q5: Python 缩进错误
-**原因**: 在 `-c` 参数中写多行代码，缩进容易出错
-**解决**:
-- 使用 heredoc 方式
-- 或创建 .py 文件再执行
-
 ## 输出格式
 
 完成后向用户展示：
 
 ```
-✅ 项目创建成功！
+项目创建成功！
 
 **项目名称**: distribution-management-system
 **项目路径**: ./distribution-management-system
@@ -281,7 +275,7 @@ cd ./项目名称
 ## 注意事项
 
 1. **必须先同步数据库**，否则找不到新消息
-2. **验证最新消息时间**，确保数据是最新的
+2. **验证索引库最新消息时间**，确保数据是最新的
 3. **多种搜索方式结合**，提高找到目标群的成功率
 4. **查看消息内容确认**，避免找错群
 5. **提取完整需求**，确保任务描述清晰
@@ -290,7 +284,7 @@ cd ./项目名称
 
 ## 相关技能
 
-- `wechat-decrypt-db`: 解密微信数据库
+- `wechat-decrypt-db`: 解密/同步微信数据库
 - `wechat-contact-search`: 搜索联系人
 - `wechat-group-analysis`: 分析群聊消息
 - `wechat-member-trace`: 追踪成员消息

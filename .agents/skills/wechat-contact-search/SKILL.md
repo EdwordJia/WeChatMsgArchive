@@ -9,11 +9,59 @@ description: Search WeChat contacts by nickname or remark name in MicroMsg.db, t
 
 ## 数据库位置
 
+首选索引库：
+
 ```
-output/decrypted_db/MicroMsg.db   # 联系人 & 群聊数据
+output/wechat_index.db                  # v3/v4 汇总索引库（定位 talker/sender_wxid）
+```
+
+联系人/群成员详细信息：
+
+```
+output/decrypted_db/MicroMsg.db         # 联系人 & 群聊数据（昵称/备注/群成员）
 ```
 
 ## Instructions
+
+### Step 0: 优先 — 从索引库定位联系人发言
+
+如果已知联系人 wxid，可以先从索引库反查其出现过的 talker：
+
+```python
+import sqlite3
+
+index_db = 'output/wechat_index.db'
+conn = sqlite3.connect(index_db)
+cur = conn.cursor()
+
+target_wxid = 'wxid_xxx'  # 替换为目标 wxid
+
+# 该联系人作为发送者出现过的所有 talker
+cur.execute("""
+    SELECT DISTINCT talker
+    FROM messages
+    WHERE sender_wxid = ?
+""", (target_wxid,))
+talkers = [row[0] for row in cur.fetchall()]
+print(f'联系人 {target_wxid} 在以下 talker 中有发言:')
+for t in talkers:
+    print(f'  {t}')
+```
+
+也可以列出索引库中所有已知的发送者 wxid，用于交叉定位：
+
+```python
+cur.execute("""
+    SELECT DISTINCT sender_wxid
+    FROM messages
+    WHERE sender_wxid IS NOT NULL AND sender_wxid != ''
+    ORDER BY sender_wxid
+""")
+wxids = [row[0] for row in cur.fetchall()]
+print(f'索引库中共有 {len(wxids)} 个不同 sender_wxid')
+```
+
+> 联系人昵称、备注、群成员列表仍需 `MicroMsg.db`。先尝试索引库反查 talker，必要时再解密 MicroMsg.db。
 
 ### Step 1: 连接数据库
 
@@ -80,6 +128,7 @@ conn.close()
 - `UserNameList` 字段以 `^G` 分隔多个成员 wxid
 - 企业微信成员 wxid 格式为 `xxxxx@openim`，群 ID 格式为 `xxxxx@chatroom`
 - 同一昵称可能对应多个不同 wxid（同名用户）
+- 索引库 `output/wechat_index.db` 可快速定位联系人在哪些 talker 中有发言，推荐优先反查
 - 若 `Session` 表无群名，则使用 `Contact` 表的 `NickName` 字段兜底
 
 ## 输出格式

@@ -9,13 +9,62 @@ description: Extract and analyze all messages from a specific WeChat group chat 
 
 ## 数据库位置
 
+首选索引库：
+
 ```
-output/decrypted_db/Multi/MSG0.db    # 消息记录
-output/decrypted_db/MicroMsg.db      # 联系人 & 群成员信息
-output/decrypted_db/info.json        # 自己的 wxid
+output/wechat_index.db                 # v3/v4 汇总索引库（推荐优先查询）
+```
+
+解密后数据库（备选）：
+
+```
+output/decrypted_db/Multi/MSG0.db      # 消息记录
+output/decrypted_db/MicroMsg.db        # 联系人 & 群成员信息
+output/decrypted_db/info.json          # 自己的 wxid
 ```
 
 ## Instructions
+
+### Step 0: 优先方式 — 查索引库
+
+对于日常分析，推荐直接查 `output/wechat_index.db` 的 `messages` 表：
+
+```python
+import sqlite3
+from datetime import datetime
+from collections import Counter
+
+group_id = '49487213350@chatroom'   # 替换为目标群 ID
+index_db = 'output/wechat_index.db'
+
+conn = sqlite3.connect(index_db)
+cur = conn.cursor()
+
+cur.execute("""
+    SELECT msg_type, is_sender, sender_wxid, content, create_time
+    FROM messages
+    WHERE talker = ?
+    ORDER BY create_time
+""", (group_id,))
+
+messages = []
+for msg_type, is_sender, sender_wxid, content, ts in cur.fetchall():
+    ts_str = datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S') if ts else '未知'
+    sender_name = '我' if is_sender else (sender_wxid or '未知')
+    type_map = {1:'文本',3:'图片',34:'语音',43:'视频',47:'表情包',10000:'系统消息',49:'链接/文件'}
+    type_name = type_map.get(msg_type, f'类型{msg_type}')
+    text_map = {3:'[图片]',34:'[语音]',43:'[视频]',47:'[表情包]',49:'[链接/文件]'}
+    text = text_map.get(msg_type, content or f'[{type_name}]') if msg_type != 1 else (content or '')
+    messages.append((ts_str, sender_name, type_name, text, msg_type))
+
+conn.close()
+```
+
+提取完成后，可直接复用下面 Step 4 ~ Step 6 的统计与导出逻辑。
+
+## 备选方式（直接查解密 DB）
+
+以下步骤适用于需要从解密后的原始 MSG*.db 获取信息的场景。
 
 ### Step 1: 解析 BytesExtra 获取发送者 wxid
 
@@ -155,7 +204,8 @@ with open(f'{out_dir}/group_{safe_name}_stats.txt', 'w', encoding='utf-8') as f:
 - `IsSender=1` 表示消息为自己发送，无需解析 BytesExtra
 - 群 ID 格式固定为 `xxxxx@chatroom`
 - 企业微信成员 wxid 为 `xxxxx@openim`，在 Contact 表中可能查不到昵称
-- MSG0.db 只包含近期消息，历史消息可能在 Multi/MSG1.db 等文件中
+- 索引库 `output/wechat_index.db` 覆盖 v3/v4 全量消息，推荐优先查询
+- 如需解密后的原始字段或 MicroMsg.db 中的昵称/备注，再按需解密
 
 ## 输出格式
 

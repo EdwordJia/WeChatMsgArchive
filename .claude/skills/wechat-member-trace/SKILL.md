@@ -9,13 +9,79 @@ description: Trace and analyze all group messages sent by a specific WeChat memb
 
 ## 数据库位置
 
+首选索引库：
+
 ```
-output/decrypted_db/Multi/MSG0.db    # 消息记录
-output/decrypted_db/MicroMsg.db      # 联系人 & 群成员
-output/decrypted_db/info.json        # 自己的 wxid
+output/wechat_index.db                 # v3/v4 汇总索引库（推荐优先查询）
+```
+
+解密后数据库（备选）：
+
+```
+output/decrypted_db/Multi/MSG0.db      # 消息记录
+output/decrypted_db/MicroMsg.db        # 联系人 & 群成员
+output/decrypted_db/info.json          # 自己的 wxid
 ```
 
 ## Instructions
+
+### Step 0: 优先方式 — 从索引库追踪
+
+```python
+import sqlite3, csv, os, sys
+from datetime import datetime
+from collections import Counter
+sys.stdout.reconfigure(encoding='utf-8')
+
+index_db = 'output/wechat_index.db'
+conn = sqlite3.connect(index_db)
+cur = conn.cursor()
+
+keyword = '三叶草'  # 替换为用户输入
+
+# 先通过 MicroMsg.db 或已有记录拿到目标 wxid（索引库 messages 表不存昵称/备注）
+target_wxids = ['wxid_xxx']   # 替换为已知的 wxid 列表
+
+# 查询目标成员在哪些群聊有发言
+cur.execute("""
+    SELECT DISTINCT talker
+    FROM messages
+    WHERE sender_wxid IN ({holders})
+      AND talker LIKE '%@chatroom'
+""".format(holders=','.join('?' * len(target_wxids))), target_wxids)
+
+groups_for_member = {row[0]: row[0] for row in cur.fetchall()}
+print(f'{keyword} 在 {len(groups_for_member)} 个群有发言')
+for gid in groups_for_member:
+    print(f'  {gid}')
+
+# 提取该成员在所有群聊中的消息
+all_messages = []   # (time, date, group_id, group_name, sender_wxid, type_name, text)
+cur.execute("""
+    SELECT create_time, talker, sender_wxid, msg_type, content
+    FROM messages
+    WHERE sender_wxid IN ({holders})
+      AND talker LIKE '%@chatroom'
+    ORDER BY create_time
+""".format(holders=','.join('?' * len(target_wxids))), target_wxids)
+
+for ts, talker, sender_wxid, msg_type, content in cur.fetchall():
+    ts_str   = datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S') if ts else '未知'
+    date_str = datetime.fromtimestamp(ts).strftime('%Y-%m-%d') if ts else '未知'
+    type_map = {1:'文本',3:'图片',34:'语音',43:'视频',47:'表情包',10000:'系统消息',49:'链接/文件'}
+    text_map = {3:'[图片]',34:'[语音]',43:'[视频]',47:'[表情包]',49:'[链接/文件]',10000:'[系统消息]'}
+    type_name = type_map.get(msg_type, f'类型{msg_type}')
+    text = text_map.get(msg_type, content or '') if msg_type != 1 else (content or '')
+    all_messages.append((ts_str, date_str, talker, talker, sender_wxid, type_name, text))
+
+conn.close()
+```
+
+提取完成后，可直接复用下面 Step 5 ~ Step 7 的统计分析与导出逻辑。
+
+## 备选方式（直接查解密 DB）
+
+以下步骤适用于需要从解密后的 MicroMsg.db / MSG*.db 获取昵称、群成员及原始字段的场景。
 
 ### Step 1: 搜索目标成员
 
@@ -191,7 +257,8 @@ conn_micro.close()
 
 - `BytesExtra` 仅在群消息中携带发送者信息，私聊消息通过 `IsSender` 判断
 - 同一昵称可能对应多个 wxid，所有匹配的 wxid 都会被追踪
-- `MSG0.db` 为近期消息，如需历史消息需遍历 `Multi/MSG*.db`
+- 索引库 `output/wechat_index.db` 覆盖 v3/v4 全量消息，推荐优先查询
+- 如需昵称/备注或群成员列表，再按需解密 `MicroMsg.db`
 - 系统消息（Type=10000）通常无发送者，不计入统计
 
 ## 输出格式
