@@ -1,3 +1,11 @@
+---
+id: mod-multi-platform
+type: module-design
+title: 多平台消息分析框架（PlatformAdapter）
+status: draft
+parent: arch-overview
+---
+
 # 多平台扩展架构设计
 
 生成时间: 2026-04-27

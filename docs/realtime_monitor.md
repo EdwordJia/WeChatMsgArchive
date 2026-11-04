@@ -1,3 +1,11 @@
+---
+id: sub-realtime-monitor
+type: submodule-design
+title: 实时消息监控
+status: draft
+parent: mod-sync-monitor
+---
+
 # 实时消息监控器
 
 ## 功能
