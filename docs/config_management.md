@@ -1,3 +1,11 @@
+---
+id: mod-config
+type: module-design
+title: 配置管理
+status: draft
+parent: arch-overview
+---
+
 # 配置管理系统
 
 ## 功能
